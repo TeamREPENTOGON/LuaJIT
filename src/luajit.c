@@ -267,6 +267,21 @@ static void dotty(lua_State *L)
   progname = oldprogname;
 }
 
+/* Push on the stack the contents of table 'arg' from 1 to #arg */
+static int pushargs(lua_State *L)
+{
+  int i, n;
+  lua_getglobal(L, "arg");
+  if (!lua_istable(L, -1))
+    luaL_error(L, "'arg' is not a table");
+  n = (int)luaL_len(L, -1);
+  luaL_checkstack(L, n + 3, "too many arguments to script");
+  for (i = 1; i <= n; i++)
+    lua_rawgeti(L, -i, i);
+  lua_remove(L, -i);  /* remove table from the stack */
+  return n;
+}
+
 static int handle_script(lua_State *L, char **argx)
 {
   int status;
