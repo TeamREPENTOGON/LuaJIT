@@ -1,0 +1,5 @@
+version: "1"
+rules:
+  - base: v2.1
+    upstream: LuaJIT:v2.1
+    mergeMethod: rebase
