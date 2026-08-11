@@ -1346,7 +1346,12 @@ static void build_subroutines(BuildCtx *ctx)
   |  mov RA, RC
   |  jmp >2
   |
-  |// Caveat: ra=RB rb=RC rc=RA.
+  |->vmeta_bitop_r:
+  |  movzx RB, PC_RA
+  |  movzx RC, PC_RB
+  |  movzx RA, PC_RC
+  |  jmp ->vmeta_bitop
+  |
   |->vmeta_bitop:
   |  lea RC, [BASE+RC*8]
   |  lea RA, [BASE+RA*8]
@@ -1382,8 +1387,11 @@ static void build_subroutines(BuildCtx *ctx)
   |.endif
   |  mov SAVE_PC, PC
   |  call extern lj_meta_bitop	// (lua_State *L, TValue *ra,*rb,*rc, BCReg op)
+  |  // NULL (finished) or TValue * (metamethod) returned in eax (RC).
   |  mov BASE, L:RB->base
-  |  jmp ->cont_nop
+  |  test RC, RC
+  |  jz ->cont_nop
+  |  jmp ->vmeta_binop
   |
   |//-- Call metamethod ----------------------------------------------------
   |
@@ -4199,9 +4207,10 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |.else
     |  checknum RD, ->vmeta_bnot
     |  movsd xmm0, qword [BASE+RD*8]
-    |  sseconst_tobit xmm1, RBa
-    |  addsd xmm0, xmm1
-    |  movd RB, xmm0
+    |  cvttsd2si RB, xmm0
+    |  cvtsi2sd xmm1, RB
+    |  ucomisd xmm1, xmm0
+    |  jne ->vmeta_bnot
     |  not RB
     |  cvtsi2sd xmm0, RB
     |  movsd qword [BASE+RA*8], xmm0
@@ -4233,13 +4242,16 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  checknum RC, ->vmeta_bitop
     |  movsd xmm0, qword [BASE+RA*8]
     |  movsd xmm1, qword [BASE+RC*8]
-    |  sseconst_tobit xmm2, RCa
-    |  addsd xmm0, xmm2
-    |  addsd xmm1, xmm2
-    |  movd RA, xmm0
-    |  movd RC, xmm1
+    |  cvttsd2si RA, xmm0
+    |  cvtsi2sd xmm2, RA
+    |  ucomisd xmm2, xmm0
+    |  jne ->vmeta_bitop_r
+    |  cvttsd2si RC, xmm1
+    |  cvtsi2sd xmm2, RC
+    |  ucomisd xmm2, xmm1
+    |  jne ->vmeta_bitop_r
     |.if shift == 1
-    |  ins RC, cl		// Assumes RA is ecx.
+    |  ins RC, cl
     |.else
     |  ins RC, RA
     |.endif
@@ -4259,13 +4271,137 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  ins_bitop xor, 0
     break;
   case BC_BSHL:
-    |  ins_bitop shl, 1
+    |  ins_A
+    |  mov RB, RA
+    |  movzx RA, RCL
+    |  movzx RC, RCH
+    |.if DUALNUM
+    |  checkint RA, ->vmeta_bitop
+    |  checkint RC, ->vmeta_bitop
+    |  mov RA, [BASE+RA*8]
+    |  cmp RA, 32
+    |  jae ->vmeta_bitop_r
+    |  mov RC, [BASE+RC*8]
+    |  test RA, RA
+    |  jz >1
+    |  movd xmm2, KBASE
+    |  mov KBASE, RC
+    |  sar KBASE, 31
+    |  shld KBASE, RC, cl
+    |  shl RC, cl
+    |  mov RA, RC
+    |  sar RA, 31
+    |  cmp RA, KBASE
+    |  movd KBASE, xmm2
+    |  jne ->vmeta_bitop_r
+    |1:
+    |  mov dword [BASE+RB*8+4], LJ_TISNUM
+    |  mov dword [BASE+RB*8], RC
+    |.else
+    |  checknum RA, ->vmeta_bitop
+    |  checknum RC, ->vmeta_bitop
+    |  movsd xmm0, qword [BASE+RA*8]
+    |  movsd xmm1, qword [BASE+RC*8]
+    |  cvttsd2si RA, xmm0
+    |  cvtsi2sd xmm2, RA
+    |  ucomisd xmm2, xmm0
+    |  jne ->vmeta_bitop_r
+    |  cmp RA, 32
+    |  jae ->vmeta_bitop_r
+    |  cvttsd2si RC, xmm1
+    |  cvtsi2sd xmm2, RC
+    |  ucomisd xmm2, xmm1
+    |  jne ->vmeta_bitop_r
+    |  movd xmm2, KBASE
+    |  mov KBASE, RC
+    |  sar KBASE, 31
+    |  shld KBASE, RC, cl
+    |  shl RC, cl	
+    |  mov RA, RC
+    |  sar RA, 31
+    |  cmp RA, KBASE
+    |  movd KBASE, xmm2
+    |  jne ->vmeta_bitop_r
+    |  cvtsi2sd xmm0, RC
+    |  movsd qword [BASE+RB*8], xmm0
+    |.endif
+    |  ins_next
     break;
   case BC_BSHR:
-    |  ins_bitop shr, 1
+    |  ins_A
+    |  mov RB, RA
+    |  movzx RA, RCL
+    |  movzx RC, RCH
+    |.if DUALNUM
+    |  checkint RA, ->vmeta_bitop
+    |  checkint RC, ->vmeta_bitop
+    |  mov RA, [BASE+RA*8]
+    |  cmp RA, 32
+    |  jae ->vmeta_bitop_r
+    |  mov RC, [BASE+RC*8]
+    |  shr RC, cl
+    |  test RC, RC
+    |  js ->vmeta_bitop_r
+    |  mov dword [BASE+RB*8+4], LJ_TISNUM
+    |  mov dword [BASE+RB*8], RC
+    |.else
+    |  checknum RA, ->vmeta_bitop
+    |  checknum RC, ->vmeta_bitop
+    |  movsd xmm0, qword [BASE+RA*8]
+    |  movsd xmm1, qword [BASE+RC*8]
+    |  cvttsd2si RA, xmm0
+    |  cvtsi2sd xmm2, RA
+    |  ucomisd xmm2, xmm0
+    |  jne ->vmeta_bitop_r
+    |  cmp RA, 32
+    |  jae ->vmeta_bitop_r
+    |  cvttsd2si RC, xmm1
+    |  cvtsi2sd xmm2, RC
+    |  ucomisd xmm2, xmm1
+    |  jne ->vmeta_bitop_r
+    |  test RC, RC
+    |  js ->vmeta_bitop_r
+    |  shr RC, cl
+    |  cvtsi2sd xmm0, RC
+    |  movsd qword [BASE+RB*8], xmm0
+    |.endif
+    |  ins_next
     break;
   case BC_BSAR:
-    |  ins_bitop sar, 1
+    |  ins_A 
+    |  mov RB, RA
+    |  movzx RA, RCL
+    |  movzx RC, RCH
+    |.if DUALNUM
+    |  checkint RA, ->vmeta_bitop
+    |  checkint RC, ->vmeta_bitop
+    |  mov RA, [BASE+RA*8]
+    |  cmp RA, 32
+    |  jae ->vmeta_bitop_r
+    |  mov RC, [BASE+RC*8]
+    |  sar RC, cl
+    |  mov dword [BASE+RB*8+4], LJ_TISNUM
+    |  mov dword [BASE+RB*8], RC
+    |.else
+    |  checknum RA, ->vmeta_bitop
+    |  checknum RC, ->vmeta_bitop
+    |  movsd xmm0, qword [BASE+RA*8]
+    |  movsd xmm1, qword [BASE+RC*8]
+    |  cvttsd2si RA, xmm0
+    |  cvtsi2sd xmm2, RA
+    |  ucomisd xmm2, xmm0
+    |  jne ->vmeta_bitop_r
+    |  cmp RA, 32
+    |  jae ->vmeta_bitop_r
+    |  cvttsd2si RC, xmm1
+    |  cvtsi2sd xmm2, RC
+    |  ucomisd xmm2, xmm1
+    |  jne ->vmeta_bitop_r
+    |  sar RC, cl
+    |  cvtsi2sd xmm0, RC
+    |  movsd qword [BASE+RB*8], xmm0
+    |.endif
+    |  ins_next
     break;
 
   /* -- Constant ops ------------------------------------------------------ */

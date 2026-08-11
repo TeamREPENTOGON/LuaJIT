@@ -239,74 +239,108 @@ TValue *lj_meta_arith(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc,
   }
 }
 
-/* Helper for bit operators. No bitop metamethods in v2.1. */
-void lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg op)
+/* Helper for bit operators. */
+TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg op)
 {
+  MMS mm = bcmode_mm(op);
 #if LJ_HASFFI
-  CTypeID id = 0, id_ignore = 0;
-  uint64_t b = lj_carith_checkbit64(L, rb, &id);
-  uint64_t c = lj_carith_checkbit64(L, rc, op >= BC_BSHL ? &id_ignore : &id);
-  if (id) {
-    if (tvisnum(rb)) {
-      b = id == CTID_UINT64 ? lj_num2u64(numV(rb)) : (uint64_t)lj_num2i64(numV(rb));
-    }
-    if (tvisnum(rc)) {
-      c = id == CTID_UINT64 ? lj_num2u64(numV(rc)) : (uint64_t)lj_num2i64(numV(rc));
-    }
-  }
-  switch (op) {
-  case BC_BNOT: b = ~b; break;
-  case BC_BAND: b &= c; break;
-  case BC_BOR: b |= c; break;
-  case BC_BXOR: b ^= c; break;
-  default:
+  if (tviscdata(rb) || tviscdata(rc)) { 
+    CTypeID id = 0, id_ignore = 0;
+    uint64_t b = lj_carith_checkbit64(L, rb, &id);
+    uint64_t c = lj_carith_checkbit64(L, rc, op >= BC_BSHL ? &id_ignore : &id);
     if (id) {
-      b = lj_carith_shift64(b, (int32_t)c, op-BC_BSHL);
-    } else if (op == BC_BSHL) {
-      b = (uint64_t)((uint32_t)b << ((uint32_t)c & 31));
-    } else if (op == BC_BSHR) {
-      b = (uint64_t)((uint32_t)b >> ((uint32_t)c & 31));
-    } else {
-      lj_assertL(op == BC_BSAR, "bad bytecode op %d", op);
-      b = (uint64_t)(uint32_t)((int32_t)b >> ((uint32_t)c & 31));
+      if (tvisnum(rb)) {
+	b = id == CTID_UINT64 ? lj_num2u64(numV(rb)) : (uint64_t)lj_num2i64(numV(rb));
+      }
+      if (tvisnum(rc)) {
+	c = id == CTID_UINT64 ? lj_num2u64(numV(rc)) : (uint64_t)lj_num2i64(numV(rc));
+      }
     }
-    break;
+    switch (op) {
+    case BC_BNOT: b = ~b; break;
+    case BC_BAND: b &= c; break;
+    case BC_BOR: b |= c; break;
+    case BC_BXOR: b ^= c; break;
+    default:
+      if (id) {
+	b = lj_carith_shift64(b, (int32_t)c, op-BC_BSHL);
+      } else {
+	/* No cdata value operand: shift the plain operand as int64 (RGON). */
+	int64_t bv = tvisint(rb) ? (int64_t)intV(rb) :
+		     tvisnum(rb) ? lj_num2i64(numV(rb)) :
+		     (int64_t)lj_carith_checkbit64(L, rb, &id_ignore);
+	c &= 63;
+	switch (op) {
+	case BC_BSHL: b = (uint64_t)bv << c; break;
+	case BC_BSHR: b = (uint64_t)bv >> c; break;
+	default:
+	  lj_assertL(op == BC_BSAR, "bad bytecode op %d", op);
+	  b = (uint64_t)(bv >> c);
+	  break;
+	}
+      }
+      break;
+    }
+    if (id) {
+      GCcdata *cd = lj_cdata_new_(L, id, 8);
+      *(uint64_t *)cdataptr(cd) = b;
+      setcdataV(L, ra, cd);
+    } else {
+      if (checki32((int64_t)b))
+	setintV(ra, (int32_t)b);
+      else
+	setnumV(ra, (lua_Number)(int64_t)b);
+    }
+    return NULL;
   }
-  if (id) {
-    GCcdata *cd = lj_cdata_new_(L, id, 8);
-    *(uint64_t *)cdataptr(cd) = b;
-    setcdataV(L, ra, cd);
-  } else {
-    setintV(ra, (int32_t)b);
-  }
+#endif
+  {
+    TValue tempb, tempc;
+    cTValue *b, *c;
+    if ((b = str2num(rb, &tempb)) != NULL && (c = str2num(rc, &tempc)) != NULL) {
+      int64_t bv, cv;
+      if (tvisint(b)) bv = (int64_t)intV(b);
+      else bv = lj_num2i64(numV(b));
+      if (tvisint(c)) cv = (int64_t)intV(c);
+      else cv = lj_num2i64(numV(c));
+      switch (op) {
+      case BC_BNOT: bv = ~bv; break;
+      case BC_BAND: bv &= cv; break;
+      case BC_BOR: bv |= cv; break;
+      case BC_BXOR: bv ^= cv; break;
+      case BC_BSHL: bv = (int64_t)((uint64_t)bv << (cv & 63)); break;
+      case BC_BSHR: bv = (int64_t)((uint64_t)bv >> (cv & 63)); break;
+      case BC_BSAR: bv >>= (cv & 63); break;
+      default:
+	lj_assertL(0, "bad bytecode op %d", op);
+	break;
+      }
+      if (checki32(bv))
+	setintV(ra, (int32_t)bv);
+      else
+	setnumV(ra, (lua_Number)bv);
+      return NULL;
+    }
+/* RGON NOTE: We only care about x86 since Isaac is a 32 bit executable. */
+#if LJ_TARGET_X86
+    {
+      cTValue *mo = lj_meta_lookup(L, rb, mm);
+      if (tvisnil(mo)) {
+	mo = lj_meta_lookup(L, rc, mm);
+	if (tvisnil(mo)) {
+	  if (str2num(rb, &tempb) == NULL) rc = rb;
+	  lj_err_optype(L, rc, LJ_ERR_OPARITH);
+	  return NULL; 
+	}
+      }
+      return mmcall(L, lj_cont_ra, mo, rb, rc);
+    }
 #else
-#if LJ_DUALNUM
-  uint32_t b = 0, c = 0;
-  if (tvisint(rb)) b = (uint32_t)intV(rb);
-  else if (tvisnum(rb)) b = (uint32_t)lj_num2bit(numV(rb));
-  else goto err;
-  if (tvisint(rc)) c = (uint32_t)intV(rc);
-  else if (tvisnum(rc)) c = (uint32_t)lj_num2bit(numV(rc));
-  else goto err;
-  switch (op) {
-  case BC_BNOT: b = ~b; break;
-  case BC_BAND: b &= c; break;
-  case BC_BOR: b |= c; break;
-  case BC_BXOR: b ^= c; break;
-  case BC_BSHL: b <<= (c & 31); break;
-  case BC_BSHR: b >>= (c & 31); break;
-  case BC_BSAR: b = (uint32_t)((int32_t)b >> (c & 31)); break;
-  default:
-    lj_assertL(0, "bad bytecode op %d", op);
-    break;
+    UNUSED(mm);
+    lj_err_optype(L, tvisnumber(rb) ? rc : rb, LJ_ERR_OPARITH);
+    return NULL;
+#endif
   }
-  setintV(ra, (int32_t)b);
-  return;
-err:
-#endif
-  UNUSED(ra); UNUSED(op);
-  lj_err_optype(L, tvisnumber(rb) ? rc : rb, LJ_ERR_OPARITH);
-#endif
 }
 
 /* Helper for CAT. Coercion, iterative concat, __concat metamethod. */

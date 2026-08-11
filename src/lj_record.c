@@ -1168,7 +1168,7 @@ static TRef rec_mm_arith(jit_State *J, RecordIndex *ix, MMS mm)
   copyTV(J->L, basev+1+LJ_FR2, &ix->tabv);
   copyTV(J->L, basev+2+LJ_FR2, &ix->keyv);
   if (!lj_record_mm_lookup(J, ix, mm)) {  /* Lookup mm on 1st operand. */
-    if (mm != MM_unm) {
+    if (mm != MM_unm && mm != MM_bnot) {
       ix->tab = ix->key;
       copyTV(J->L, &ix->tabv, &ix->keyv);
       if (lj_record_mm_lookup(J, ix, mm))  /* Lookup mm on 2nd operand. */
@@ -2515,8 +2515,21 @@ void lj_record_ins(jit_State *J)
       break;
     }
 #endif
-    rc = lj_opt_narrow_tobit(J, rc);
-    rc = emitir(IRTI(IR_BNOT), rc, 0);
+    if (tref_isnumber_str(rc)) {
+      if (tref_isinteger(rc))
+	rc = emitir(IRTI(IR_BNOT), rc, 0);
+#if LJ_HASFFI
+      else
+	rc = recff_bit64_num(J, rc, 0, rcv, NULL, IR_BNOT);
+#else
+      else
+	lj_trace_err(J, LJ_TRERR_NYIBC);
+#endif
+    } else {
+      ix.tab = rc;
+      copyTV(J->L, &ix.tabv, rcv);
+      rc = rec_mm_arith(J, &ix, MM_bnot);
+    }
     break;
 
   case BC_BAND: case BC_BOR: case BC_BXOR:
@@ -2526,9 +2539,23 @@ void lj_record_ins(jit_State *J)
       break;
     }
 #endif
+    if (!(tref_isnumber_str(rb) && tref_isnumber_str(rc))) {
+      ix.tab = rb; ix.key = rc;
+      copyTV(J->L, &ix.tabv, rbv);
+      copyTV(J->L, &ix.keyv, rcv);
+      rc = rec_mm_arith(J, &ix, bcmode_mm(op));
+      break;
+    }
+    if (tref_isinteger(rb) && tref_isinteger(rc))
+      goto recbit;
+#if LJ_HASFFI
+    rc = recff_bit64_num(J, rb, rc, rbv, rcv,
+			 (int)op - (int)BC_BAND + (int)IR_BAND);
+#else
+    lj_trace_err(J, LJ_TRERR_NYIBC);
+#endif
+    break;
   recbit:
-    rb = lj_opt_narrow_tobit(J, rb);
-    rc = lj_opt_narrow_tobit(J, rc);
     rc = emitir(IRTI((int)op - (int)BC_BAND + (int)IR_BAND), rb, rc);
     break;
 
@@ -2543,7 +2570,20 @@ void lj_record_ins(jit_State *J)
       rc = xrc;  /* Shift amount may have been converted. */
     }
 #endif
-    goto recbit;
+    if (!(tref_isnumber_str(rb) && tref_isnumber_str(rc))) {
+      ix.tab = rb; ix.key = rc;
+      copyTV(J->L, &ix.tabv, rbv);
+      copyTV(J->L, &ix.keyv, rcv);
+      rc = rec_mm_arith(J, &ix, bcmode_mm(op));
+      break;
+    }
+#if LJ_HASFFI
+    rc = recff_bit64_shift_num(J, rb, rc, rbv, rcv,
+			       (int)op - (int)BC_BSHL + (int)IR_BSHL);
+#else
+    lj_trace_err(J, LJ_TRERR_NYIBC);
+#endif
+    break;
 
   /* -- Miscellaneous ops ------------------------------------------------- */
 

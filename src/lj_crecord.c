@@ -1970,6 +1970,42 @@ TRef recff_bit64_bitop(jit_State *J, TRef rb, TRef rc,
   return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, id), tr);
 }
 
+/* RGON: 64 bit bit ops on plain Lua numbers, result converted to a number.
+** The interpreter returns an int if the result fits in an int32, else a
+** double. The JIT always returns a double here; both are value-equal.
+*/
+TRef recff_bit64_num(jit_State *J, TRef rb, TRef rc,
+		     TValue *rbv, TValue *rcv, IROp op)
+{
+  CTState *cts = ctype_ctsG(J2G(J));
+  CType *ct = ctype_get(cts, CTID_INT64);
+  TRef tr = crec_bit64_arg(J, ct, rb, rbv);
+  TRef tr2 = rcv ? crec_bit64_arg(J, ct, rc, rcv) : 0;
+  lj_needsplit(J);
+  tr = emitir(IRT(op, IRT_I64), tr, tr2);
+  return emitir(IRT(IR_CONV, IRT_NUM), tr,
+		(IRT_NUM << IRCONV_DSH) | IRT_I64 | IRCONV_ANY);
+}
+
+/* RGON: 64 bit shift ops on plain Lua numbers, result converted to a number. */
+TRef recff_bit64_shift_num(jit_State *J, TRef rb, TRef rc,
+			   TValue *rbv, TValue *rcv, IROp op)
+{
+  CTState *cts = ctype_ctsG(J2G(J));
+  TRef tsh = tref_isinteger(rc) ? rc :
+	     crec_bit64_arg(J, ctype_get(cts, CTID_INT64), rc, rcv);
+  TRef tr;
+  if (LJ_32 && !tref_isinteger(tsh))
+    tsh = emitconv(tsh, IRT_INT, tref_type(tsh), 0);
+  if (!LJ_TARGET_MASKSHIFT && !tref_isk(tsh))
+    tsh = emitir(IRT(IR_BAND, IRT_INT), tsh, lj_ir_kint(J, 63));
+  tr = crec_bit64_arg(J, ctype_get(cts, CTID_INT64), rb, rbv);
+  lj_needsplit(J);
+  tr = emitir(IRT(op, IRT_I64), tr, tsh);
+  return emitir(IRT(IR_CONV, IRT_NUM), tr,
+		(IRT_NUM << IRCONV_DSH) | IRT_I64 | IRCONV_ANY);
+}
+
 /* -- Miscellaneous library functions ------------------------------------- */
 
 void LJ_FASTCALL lj_crecord_tonumber(jit_State *J, RecordFFData *rd)

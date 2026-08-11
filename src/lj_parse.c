@@ -86,10 +86,10 @@ typedef struct ExpDesc {
 #define EXPR_F_NONAV		0x04	/* Disallow safe navigation. */
 #define EXPR_F_RET1		0x08	/* Return a single expr. */
 
-static LJ_AINLINE int32_t expr_bitV(ExpDesc *e)
+static LJ_AINLINE int64_t expr_bitV(ExpDesc *e)
 {
   TValue *o = expr_numtv(e);
-  return tvisint(o) ? intV(o) : lj_num2bit(numV(o));
+  return tvisint(o) ? (int64_t)intV(o) : lj_num2i64(numV(o));
 }
 
 /* Initialize expression. */
@@ -819,17 +819,21 @@ static int foldarith(BinOpr opr, ExpDesc *e1, ExpDesc *e2)
 static int foldbitop(BinOpr opr, ExpDesc *e1, ExpDesc *e2)
 {
   if (expr_isnumk_nojump(e1) && expr_isnumk_nojump(e2)) {
-    int32_t k1 = expr_bitV(e1), k2 = expr_bitV(e2);
+    int64_t k1 = expr_bitV(e1), k2 = expr_bitV(e2);
     switch (opr) {
     case OPR_BAND: k1 &= k2; break;
     case OPR_BOR: k1 |= k2; break;
     case OPR_BXOR: k1 ^= k2; break;
-    case OPR_BSHL: k1 <<= (k2 & 31); break;
-    case OPR_BSHR: k1 = (int32_t)((uint32_t)k1 >> (k2 & 31)); break;
-    case OPR_BSAR: k1 >>= (k2 & 31); break;
+    case OPR_BSHL: k1 = (int64_t)((uint64_t)k1 << (k2 & 63)); break;
+    case OPR_BSHR: k1 = (int64_t)((uint64_t)k1 >> (k2 & 63)); break;
+    case OPR_BSAR: k1 = (int64_t)k1 >> (k2 & 63); break;
     default: lj_assertX(0, "bad OPR %d", opr); break;
     }
-    setintV(&e1->u.nval, k1);
+    if (checki32(k1)) {
+      setintV(&e1->u.nval, (int32_t)k1);
+    } else {
+      setnumV(&e1->u.nval, (lua_Number)k1);
+    }
     return 1;
   }
   return 0;
@@ -1086,7 +1090,12 @@ static void bcemit_unop(FuncState *fs, BCOp op, ExpDesc *e)
 	}
       } else if (op == BC_BNOT && expr_isnumk(e)) {
 	/* Constant-fold bitwise not. */
-	setintV(&e->u.nval, (int32_t)~(uint32_t)expr_bitV(e));
+	int64_t k = ~expr_bitV(e);
+	if (checki32(k)) {
+	  setintV(&e->u.nval, (int32_t)k);
+	} else {
+	  setnumV(&e->u.nval, (lua_Number)k);
+	}
 	return;
       }
     }

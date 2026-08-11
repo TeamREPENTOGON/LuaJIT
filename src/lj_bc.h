@@ -187,13 +187,13 @@
   _(JMP,	rbase,	___,	jump,	___) \
   \
   /* Bit operators. ORDER OPR. ORDER BIT. */ \
-  _(BNOT,	dst,	___,	var,	___) \
-  _(BAND,	dst,	var,	var,	___) \
-  _(BOR,	dst,	var,	var,	___) \
-  _(BXOR,	dst,	var,	var,	___) \
-  _(BSHL,	dst,	var,	var,	___) \
-  _(BSHR,	dst,	var,	var,	___) \
-  _(BSAR,	dst,	var,	var,	___) \
+  _(BNOT,	dst,	___,	var,	bnot) \
+  _(BAND,	dst,	var,	var,	band) \
+  _(BOR,	dst,	var,	var,	bor) \
+  _(BXOR,	dst,	var,	var,	bxor) \
+  _(BSHL,	dst,	var,	var,	shl) \
+  _(BSHR,	dst,	var,	var,	shr) \
+  _(BSAR,	dst,	var,	var,	shr) \
   \
   /* Function headers. I/J = interp/JIT, F/V/C = fixarg/vararg/C func. */ \
   _(FUNCF,	rbase,	___,	___,	___) \

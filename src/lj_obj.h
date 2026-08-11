@@ -561,7 +561,9 @@ enum {
   /* The following must be in ORDER ARITH. */ \
   _(add) _(sub) _(mul) _(div) _(mod) _(pow) _(unm) \
   /* The following are used in the standard libraries. */ \
-  _(metatable) _(tostring) MMDEF_FFI(_) MMDEF_PAIRS(_)
+  _(metatable) _(tostring) MMDEF_FFI(_) MMDEF_PAIRS(_) \
+  /* The following are bit operator metamethods (Lua 5.3). */ \
+  _(band) _(bor) _(bxor) _(bnot) _(shl) _(shr)
 
 typedef enum {
 #define MMENUM(name)	MM_##name,

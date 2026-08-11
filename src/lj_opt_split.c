@@ -595,6 +595,7 @@ static void split_ir(jit_State *J)
 	  hi = nref;
 	} else {  /* Zero-extend to 64 bit. */
 	  hi = lj_ir_kint(J, 0);
+	  nir = IR(nref);  /* May have been reallocated. */
 	  goto fwdlo;
 	}
 	break;

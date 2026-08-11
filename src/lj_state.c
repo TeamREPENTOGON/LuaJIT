@@ -204,6 +204,10 @@ static TValue *cpluaopen(lua_State *L, lua_CFunction dummy, void *ud)
   g->gc.threshold = 4*g->gc.total;
 #if LJ_HASFFI
   lj_ctype_initfin(L);
+  /* RGON: Initialize CType state eagerly so 64 bit numeric bitops work
+  ** in the JIT without requiring the FFI library to be loaded.
+  */
+  lj_ctype_init(L);
 #endif
   lj_trace_initstate(g);
   lj_err_verify();

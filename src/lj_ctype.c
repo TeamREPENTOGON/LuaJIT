@@ -615,7 +615,10 @@ GCstr *lj_ctype_repr_complex(lua_State *L, void *sp, CTSize size)
 /* Initialize C type table and state. */
 CTState *lj_ctype_init(lua_State *L)
 {
-  CTState *cts = lj_mem_newt(L, sizeof(CTState), CTState);
+  CTState *cts = ctype_ctsG(G(L));
+  if (cts)
+    return cts;  /* RGON: CType state already initialized. */
+  cts = lj_mem_newt(L, sizeof(CTState), CTState);
   CType *ct = lj_mem_newvec(L, CTTYPETAB_MIN, CType);
   const char *name = lj_ctype_typenames;
   CTypeID id;

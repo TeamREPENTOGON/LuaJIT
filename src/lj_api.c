@@ -631,7 +631,7 @@ LUA_API void lua_pushnumber(lua_State *L, lua_Number n)
 
 LUA_API void lua_pushinteger(lua_State *L, lua_Integer n)
 {
-  setintptrV(L->top, n);
+  setint64V(L->top, (int64_t)n);
   incr_top(L);
 }
 
