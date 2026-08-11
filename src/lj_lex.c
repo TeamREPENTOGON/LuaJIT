@@ -390,6 +390,9 @@ static LexToken lex_scan(LexState *ls, TValue *tv)
       if (ls->c == '.') { lex_next(ls); return TK_nav; }
       if (ls->c == '?') { lex_next(ls); return TK_coal; }
       return '?';
+    case '/':
+      lex_next(ls);
+      if (ls->c != '/') return '/'; else { lex_next(ls); return TK_idiv; }
     case '&':
       lex_next(ls);
       if (ls->c != '&') return '&'; else { lex_next(ls); return TK_and_; }

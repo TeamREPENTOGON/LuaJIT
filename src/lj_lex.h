@@ -19,7 +19,8 @@
   __(concat, ..) __(dots, ...) __(eq, ==) __(ge, >=) __(le, <=) __(ne, ~=) \
   __(nav, ?.) __(coal, \?\?) __(shl, <<) __(shr, >>)  __(sar, ~>>) \
   __(and_, &&) __(or_, ||) __(ne_, !=) __(arrow, ->) \
-  __(label, ::) __(number, <number>) __(name, <name>) __(string, <string>) \
+  __(idiv, \/\/) __(label, ::) __(number, <number>) __(name, <name>) \
+  __(string, <string>) \
   __(eof, <eof>)
 
 enum {

@@ -171,6 +171,7 @@ typedef enum BinOpr {
   OPR_NE, OPR_EQ,
   OPR_LT, OPR_GE, OPR_LE, OPR_GT,
   OPR_AND, OPR_OR, OPR_COAL,
+  OPR_IDIV,
   OPR_NOBINOPR
 } BinOpr;
 
@@ -946,10 +947,46 @@ static void bcemit_binop_left(FuncState *fs, BinOpr op, ExpDesc *e)
   }
 }
 
+/* RGON: Emit floor division: a // b  =>  math.floor(a / b). */
+static void bcemit_idiv(FuncState *fs, ExpDesc *e1, ExpDesc *e2)
+{
+  BCReg base, arg;
+  if (expr_isnumk_nojump(e1) && expr_isnumk_nojump(e2)) {
+    lua_Number n = lj_vm_floor(expr_numberV(e1) / expr_numberV(e2));
+    TValue o;
+    setnumV(&o, n);
+    if (!tvisnan(&o) && !tvismzero(&o)) {
+      setnumV(&e1->u.nval, n);
+      e1->k = VKNUM;
+      return;
+    }
+  }
+  bcemit_arith(fs, OPR_DIV, e1, e2);
+  bcreg_reserve(fs, 3 + fs->ls->fr2);
+  base = fs->freereg - (3 + fs->ls->fr2);
+  arg = base + 1 + fs->ls->fr2;
+  setbc_a(bcptr(fs, e1), arg);
+  e1->k = VNONRELOC;
+  e1->u.s.info = arg;
+  {
+    lua_State *L = fs->L;
+    BCReg tmp = base + 2 + fs->ls->fr2;
+    bcemit_AD(fs, BC_GGET, tmp,
+	      const_gc(fs, obj2gco(lj_str_new(L, "math", 4)), LJ_TSTR));
+    bcemit_ABC(fs, BC_TGETS, base, tmp,
+	       const_gc(fs, obj2gco(lj_str_new(L, "floor", 5)), LJ_TSTR));
+  }
+  bcemit_ABC(fs, BC_CALL, base, 2, 2);
+  e1->u.s.info = base;
+  fs->freereg = base+1;
+}
+
 /* Emit binary operator. */
 static void bcemit_binop(FuncState *fs, BinOpr op, ExpDesc *e1, ExpDesc *e2)
 {
-  if (op <= OPR_POW) {
+  if (op == OPR_IDIV) {
+    bcemit_idiv(fs, e1, e2);
+  } else if (op <= OPR_POW) {
     if (!foldarith(op, e1, e2)) bcemit_arith(fs, op, e1, e2);
   } else if (op <= OPR_BSAR) {
     if (!foldbitop(op, e1, e2)) {
@@ -2291,6 +2328,7 @@ static BinOpr token2binop(LexToken tok)
   case TK_and:	case TK_and_: return OPR_AND;
   case TK_or:	case TK_or_: return OPR_OR;
   case TK_coal:	return OPR_COAL;
+  case TK_idiv:	return OPR_IDIV;
   default:	return OPR_NOBINOPR;
   }
 }
@@ -2307,7 +2345,7 @@ static const struct {
   {9,8},				/* CONCAT (right associative) */
   {3,3}, {3,3},				/* EQ NE */
   {3,3}, {3,3}, {3,3}, {3,3},		/* LT GE GT LE */
-  {2,2}, {1,1}, {1,1}			/* AND OR COAL */
+  {2,2}, {1,1}, {1,1}, {11,11}		/* AND OR COAL IDIV */
 };
 
 #define UNARY_PRIORITY		12  /* Priority for unary operators. */
