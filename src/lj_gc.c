@@ -144,28 +144,44 @@ size_t lj_gc_separateudata(global_State *g, int all)
   size_t m = 0;
   GCRef *p = &mainthread(g)->nextgc;
   GCobj *o;
+#define GC_UD_MT_CACHE 8
+  struct { GCtab *mt; int nofin; } mtc[GC_UD_MT_CACHE];
+  int mtcn = 0;
   while ((o = gcref(*p)) != NULL) {
     if (!(iswhite(o) || all) || isfinalized(gco2ud(o))) {
       p = &o->gch.nextgc;  /* Nothing to do. */
-    } else if (!lj_meta_fastg(g, tabref(gco2ud(o)->metatable), MM_gc)) {
-      markfinalized(o);  /* Done, as there's no __gc metamethod. */
-      p = &o->gch.nextgc;
-    } else {  /* Otherwise move userdata to be finalized to mmudata list. */
-      m += sizeudata(gco2ud(o));
-      markfinalized(o);
-      *p = o->gch.nextgc;
-      if (gcref(g->gc.mmudata)) {  /* Link to end of mmudata list. */
-	GCobj *root = gcref(g->gc.mmudata);
-	setgcrefr(o->gch.nextgc, root->gch.nextgc);
-	setgcref(root->gch.nextgc, o);
-	setgcref(g->gc.mmudata, o);
-      } else {  /* Create circular list. */
-	setgcref(o->gch.nextgc, o);
-	setgcref(g->gc.mmudata, o);
+    } else {
+      GCtab *mt = tabref(gco2ud(o)->metatable);
+      int nofin = -1;
+      int i;
+      for (i = 0; i < mtcn; i++) {
+	if (mtc[i].mt == mt) { nofin = mtc[i].nofin; break; }
+      }
+      if (nofin < 0) {
+	nofin = (lj_meta_fastg(g, mt, MM_gc) == NULL) ? 1 : 0;
+	if (mtcn < GC_UD_MT_CACHE) { mtc[mtcn].mt = mt; mtc[mtcn].nofin = nofin; mtcn++; }
+      }
+      if (nofin) {
+	markfinalized(o);  /* Done, as there's no __gc metamethod. */
+	p = &o->gch.nextgc;
+      } else {  /* Otherwise move userdata to be finalized to mmudata list. */
+	m += sizeudata(gco2ud(o));
+	markfinalized(o);
+	*p = o->gch.nextgc;
+	if (gcref(g->gc.mmudata)) {  /* Link to end of mmudata list. */
+	  GCobj *root = gcref(g->gc.mmudata);
+	  setgcrefr(o->gch.nextgc, root->gch.nextgc);
+	  setgcref(root->gch.nextgc, o);
+	  setgcref(g->gc.mmudata, o);
+	} else {  /* Create circular list. */
+	  setgcref(o->gch.nextgc, o);
+	  setgcref(g->gc.mmudata, o);
+	}
       }
     }
   }
   return m;
+#undef GC_UD_MT_CACHE
 }
 
 /* -- Propagation phase --------------------------------------------------- */
