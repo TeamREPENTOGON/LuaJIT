@@ -81,13 +81,16 @@ LJ_FUNC void lj_gc_barriertrace(global_State *g, uint32_t traceno);
 static LJ_AINLINE void lj_gc_barrierback(global_State *g, GCtab *t)
 {
   GCobj *o = obj2gco(t);
+  GCRef *list;
   lj_assertG(isblack(o) && !isdead(g, o),
 	     "bad object states for backward barrier");
   lj_assertG(g->gc.state != GCSfinalize && g->gc.state != GCSpause,
 	     "bad GC state");
   black2gray(o);
-  setgcrefr(t->gclist, g->gc.grayagain);
-  setgcref(g->gc.grayagain, o);
+  list = (g->gc.state == GCSpropagate && (o->gch.marked & LJ_GC_WEAK) == 0) ?
+	 &g->gc.gray : &g->gc.grayagain;
+  setgcrefr(t->gclist, *list);
+  setgcref(*list, o);
 }
 
 /* Barrier for stores to table objects. TValue and GCobj variant. */
