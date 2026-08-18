@@ -24,6 +24,9 @@
 #include "lj_trace.h"
 #include "lj_vm.h"
 #include "lj_strscan.h"
+#if LJ_HASFFI
+#include "lj_cdata.h"
+#endif
 #include "lj_strfmt.h"
 
 /* -- Common helper functions --------------------------------------------- */
@@ -600,6 +603,17 @@ LUA_API void *lua_touserdata(lua_State *L, int idx)
     return lightudV(G(L), o);
   else
     return NULL;
+}
+
+// Sorry Mike Pall. I'm not happy about it either.
+LUA_API void *lua_tocdata(lua_State *L, int idx)
+{
+#if LJ_HASFFI
+  cTValue *o = index2adr(L, idx);
+  if (tviscdata(o))
+    return cdataptr(cdataV(o));
+#endif
+  return NULL;
 }
 
 LUA_API lua_State *lua_tothread(lua_State *L, int idx)

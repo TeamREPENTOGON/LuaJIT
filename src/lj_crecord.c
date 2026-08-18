@@ -665,40 +665,43 @@ static TRef crec_ct_tv(jit_State *J, CType *d, TRef dp, TRef sp, cTValue *sval)
 #endif
   } else {  /* NYI: tref_istab(sp). */
     IRType t;
-    sid = argv2cdata(J, sp, sval)->ctypeid;
-    s = ctype_raw(cts, sid);
-    svisnz = cdataptr(cdataV(sval));
-    if (ctype_isfunc(s->info)) {
-      sid = lj_ctype_intern(cts, CTINFO(CT_PTR, CTALIGN_PTR|sid), CTSIZE_PTR);
-      s = ctype_get(cts, sid);
-      t = IRT_PTR;
-    } else {
-      t = crec_ct2irt(cts, s);
-    }
-    if (ctype_isptr(s->info)) {
-      sp = emitir(IRT(IR_FLOAD, t), sp, IRFL_CDATA_PTR);
-      if (ctype_isref(s->info)) {
-	svisnz = *(void **)svisnz;
-	s = ctype_rawchild(cts, s);
-	if (ctype_isenum(s->info)) s = ctype_child(cts, s);
-	t = crec_ct2irt(cts, s);
+    if (LJ_LIKELY(tviscdata(sval))) {
+      sid = argv2cdata(J, sp, sval)->ctypeid;
+      s = ctype_raw(cts, sid);
+      svisnz = cdataptr(cdataV(sval));
+      if (ctype_isfunc(s->info)) {
+	sid = lj_ctype_intern(cts, CTINFO(CT_PTR, CTALIGN_PTR|sid), CTSIZE_PTR);
+	s = ctype_get(cts, sid);
+	t = IRT_PTR;
       } else {
-	goto doconv;
+	t = crec_ct2irt(cts, s);
       }
-    } else if (t == IRT_I64 || t == IRT_U64) {
-      sp = emitir(IRT(IR_FLOAD, t), sp, IRFL_CDATA_INT64);
-      lj_needsplit(J);
+      if (ctype_isptr(s->info)) {
+	sp = emitir(IRT(IR_FLOAD, t), sp, IRFL_CDATA_PTR);
+	if (ctype_isref(s->info)) {
+	  svisnz = *(void **)svisnz;
+	  s = ctype_rawchild(cts, s);
+	  if (ctype_isenum(s->info)) s = ctype_child(cts, s);
+	  t = crec_ct2irt(cts, s);
+	} else {
+	  goto doconv;
+	}
+      } else if (t == IRT_I64 || t == IRT_U64) {
+	sp = emitir(IRT(IR_FLOAD, t), sp, IRFL_CDATA_INT64);
+	lj_needsplit(J);
+	goto doconv;
+      } else if (t == IRT_INT || t == IRT_U32) {
+	if (ctype_isenum(s->info)) s = ctype_child(cts, s);
+	sp = emitir(IRT(IR_FLOAD, t), sp, IRFL_CDATA_INT);
+	goto doconv;
+      } else {
+	sp = emitir(IRT(IR_ADD, IRT_PTR), sp, lj_ir_kintp(J, sizeof(GCcdata)));
+      }
+      if (ctype_isnum(s->info) && t != IRT_CDATA)
+	sp = emitir(IRT(IR_XLOAD, t), sp, 0);  /* Load number value. */
       goto doconv;
-    } else if (t == IRT_INT || t == IRT_U32) {
-      if (ctype_isenum(s->info)) s = ctype_child(cts, s);
-      sp = emitir(IRT(IR_FLOAD, t), sp, IRFL_CDATA_INT);
-      goto doconv;
-    } else {
-      sp = emitir(IRT(IR_ADD, IRT_PTR), sp, lj_ir_kintp(J, sizeof(GCcdata)));
     }
-    if (ctype_isnum(s->info) && t != IRT_CDATA)
-      sp = emitir(IRT(IR_XLOAD, t), sp, 0);  /* Load number value. */
-    goto doconv;
+    lj_trace_err(J, LJ_TRERR_BADTYPE);
   }
   s = ctype_get(cts, sid);
 doconv:
@@ -1970,40 +1973,18 @@ TRef recff_bit64_bitop(jit_State *J, TRef rb, TRef rc,
   return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, id), tr);
 }
 
-/* RGON: 64 bit bit ops on plain Lua numbers, result converted to a number.
-** The interpreter returns an int if the result fits in an int32, else a
-** double. The JIT always returns a double here; both are value-equal.
-*/
 TRef recff_bit64_num(jit_State *J, TRef rb, TRef rc,
 		     TValue *rbv, TValue *rcv, IROp op)
 {
-  CTState *cts = ctype_ctsG(J2G(J));
-  CType *ct = ctype_get(cts, CTID_INT64);
-  TRef tr = crec_bit64_arg(J, ct, rb, rbv);
-  TRef tr2 = rcv ? crec_bit64_arg(J, ct, rc, rcv) : 0;
-  lj_needsplit(J);
-  tr = emitir(IRT(op, IRT_I64), tr, tr2);
-  return emitir(IRT(IR_CONV, IRT_NUM), tr,
-		(IRT_NUM << IRCONV_DSH) | IRT_I64 | IRCONV_ANY);
+  lj_trace_err(J, LJ_TRERR_NYIBC);
+  return 0;  /* Unreachable. */
 }
 
-/* RGON: 64 bit shift ops on plain Lua numbers, result converted to a number. */
 TRef recff_bit64_shift_num(jit_State *J, TRef rb, TRef rc,
 			   TValue *rbv, TValue *rcv, IROp op)
 {
-  CTState *cts = ctype_ctsG(J2G(J));
-  TRef tsh = tref_isinteger(rc) ? rc :
-	     crec_bit64_arg(J, ctype_get(cts, CTID_INT64), rc, rcv);
-  TRef tr;
-  if (LJ_32 && !tref_isinteger(tsh))
-    tsh = emitconv(tsh, IRT_INT, tref_type(tsh), 0);
-  if (!LJ_TARGET_MASKSHIFT && !tref_isk(tsh))
-    tsh = emitir(IRT(IR_BAND, IRT_INT), tsh, lj_ir_kint(J, 63));
-  tr = crec_bit64_arg(J, ctype_get(cts, CTID_INT64), rb, rbv);
-  lj_needsplit(J);
-  tr = emitir(IRT(op, IRT_I64), tr, tsh);
-  return emitir(IRT(IR_CONV, IRT_NUM), tr,
-		(IRT_NUM << IRCONV_DSH) | IRT_I64 | IRCONV_ANY);
+  lj_trace_err(J, LJ_TRERR_NYIBC);
+  return 0;  /* Unreachable. */
 }
 
 /* -- Miscellaneous library functions ------------------------------------- */
