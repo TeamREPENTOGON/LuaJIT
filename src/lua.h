@@ -103,6 +103,9 @@ typedef LUA_NUMBER lua_Number;
 /* type for integer functions */
 typedef LUA_INTEGER lua_Integer;
 
+/* opaque C type id, matching LuaJIT's internal CTypeID */
+typedef unsigned int lua_CTypeId;
+
 
 
 /*
@@ -151,7 +154,10 @@ LUA_API const char     *(lua_tolstring) (lua_State *L, int idx, size_t *len);
 LUA_API size_t          (lua_objlen) (lua_State *L, int idx);
 LUA_API lua_CFunction   (lua_tocfunction) (lua_State *L, int idx);
 LUA_API void	       *(lua_touserdata) (lua_State *L, int idx);
+LUA_API lua_CTypeId    (lua_ctypeid)    (lua_State *L, const char *name);
 LUA_API void	       *(lua_tocdata)    (lua_State *L, int idx);
+LUA_API lua_CTypeId    (lua_tocdataid)  (lua_State *L, int idx);
+LUA_API int            (lua_cdata_matches)(lua_State *L, int idx, lua_CTypeId ctypeid);
 LUA_API lua_State      *(lua_tothread) (lua_State *L, int idx);
 LUA_API const void     *(lua_topointer) (lua_State *L, int idx);
 
@@ -162,6 +168,7 @@ LUA_API const void     *(lua_topointer) (lua_State *L, int idx);
 LUA_API void  (lua_pushnil) (lua_State *L);
 LUA_API void  (lua_pushnumber) (lua_State *L, lua_Number n);
 LUA_API void  (lua_pushinteger) (lua_State *L, lua_Integer n);
+LUA_API void  (lua_pushcdata) (lua_State *L, lua_CTypeId ctypeid, const void *payload, size_t size);
 LUA_API void  (lua_pushlstring) (lua_State *L, const char *s, size_t l);
 LUA_API void  (lua_pushstring) (lua_State *L, const char *s);
 LUA_API const char *(lua_pushvfstring) (lua_State *L, const char *fmt,

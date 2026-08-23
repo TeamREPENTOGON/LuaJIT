@@ -25,6 +25,7 @@
 #include "lj_vm.h"
 #include "lj_strscan.h"
 #if LJ_HASFFI
+#include "lj_ctype.h"
 #include "lj_cdata.h"
 #endif
 #include "lj_strfmt.h"
@@ -605,7 +606,21 @@ LUA_API void *lua_touserdata(lua_State *L, int idx)
     return NULL;
 }
 
-// Sorry Mike Pall. I'm not happy about it either.
+LUA_API lua_CTypeId lua_ctypeid(lua_State *L, const char *name)
+{
+#if LJ_HASFFI
+  CTState *cts = ctype_cts(L);
+  CType *ct = NULL;
+  uint32_t tmask = (1u << CT_STRUCT) | (1u << CT_ENUM) | (1u << CT_TYPEDEF);
+  CTypeID id = lj_ctype_getname(cts, &ct, lj_str_newz(L, name), tmask);
+  if (id && ctype_istypedef(ct->info))
+    id = ctype_cid(ct->info);
+  return id;
+#else
+  return 0;
+#endif
+}
+
 LUA_API void *lua_tocdata(lua_State *L, int idx)
 {
 #if LJ_HASFFI
@@ -614,6 +629,43 @@ LUA_API void *lua_tocdata(lua_State *L, int idx)
     return cdataptr(cdataV(o));
 #endif
   return NULL;
+}
+
+LUA_API lua_CTypeId lua_tocdataid(lua_State *L, int idx)
+{
+#if LJ_HASFFI
+  cTValue *o = index2adr(L, idx);
+  if (tviscdata(o))
+    return cdataV(o)->ctypeid;
+#endif
+  return 0;
+}
+
+LUA_API int lua_cdata_matches(lua_State *L, int idx, lua_CTypeId ctypeid)
+{
+#if LJ_HASFFI
+  cTValue *o = index2adr(L, idx);
+  if (tviscdata(o)) {
+    CTState *cts = ctype_cts(L);
+    CTypeID id = cdataV(o)->ctypeid;
+    int i;
+    for (i = 0; i < 16; i++) {
+      CType *ct = ctype_raw(cts, id);
+      if (ctype_istypedef(ct->info)) {
+	id = ctype_cid(ct->info);
+	continue;
+      }
+      if (id == ctypeid)
+	return 1;
+      if (ctype_isptr(ct->info)) {
+	id = ctype_cid(ct->info);
+	continue;
+      }
+      return 0;
+    }
+  }
+#endif
+  return 0;
 }
 
 LUA_API lua_State *lua_tothread(lua_State *L, int idx)
@@ -647,6 +699,19 @@ LUA_API void lua_pushinteger(lua_State *L, lua_Integer n)
 {
   setint64V(L->top, (int64_t)n);
   incr_top(L);
+}
+
+LUA_API void lua_pushcdata(lua_State *L, lua_CTypeId ctypeid, const void *payload, size_t size)
+{
+#if LJ_HASFFI
+  GCcdata *cd = lj_cdata_new_(L, ctypeid, (MSize)size);
+  if (payload)
+    memcpy(cdataptr(cd), payload, size);
+  setcdataV(L, L->top, cd);
+  incr_top(L);
+#else
+  UNUSED(ctypeid); UNUSED(payload); UNUSED(size);
+#endif
 }
 
 LUA_API void lua_pushlstring(lua_State *L, const char *str, size_t len)
@@ -850,12 +915,22 @@ LUA_API int lua_getmetatable(lua_State *L, int idx)
 {
   cTValue *o = index2adr(L, idx);
   GCtab *mt = NULL;
-  if (tvistab(o))
-    mt = tabref(tabV(o)->metatable);
-  else if (tvisudata(o))
-    mt = tabref(udataV(o)->metatable);
-  else
-    mt = tabref(basemt_obj(G(L), o));
+#if LJ_HASFFI
+  if (tviscdata(o)) {
+    CTState *cts = ctype_cts(L);
+    cTValue *tv = lj_tab_getint(cts->miscmap, -(int32_t)cdataV(o)->ctypeid);
+    if (tv && tvistab(tv))
+      mt = tabV(tv);
+  }
+#endif
+  if (mt == NULL) {
+    if (tvistab(o))
+      mt = tabref(tabV(o)->metatable);
+    else if (tvisudata(o))
+      mt = tabref(udataV(o)->metatable);
+    else
+      mt = tabref(basemt_obj(G(L), o));
+  }
   if (mt == NULL)
     return 0;
   settabV(L, L->top, mt);
