@@ -9,6 +9,9 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
+#include <stdio.h>
+#include <string.h>
+#include <excpt.h>
 
 #include "lj_obj.h"
 #include "lj_gc.h"
@@ -17,9 +20,11 @@
 #include "lj_str.h"
 #include "lj_tab.h"
 #include "lj_state.h"
+#include "lj_udata.h"
 #include "lj_bc.h"
 #if LJ_HASFFI
 #include "lj_ctype.h"
+#include "lj_cdata.h"
 #endif
 #if LJ_HASJIT
 #include "lj_ir.h"
@@ -146,6 +151,94 @@ LJLIB_CF(jit_attach)
   }
 #endif
   return 0;
+}
+
+#define JIT_CLASSCAP 512
+
+typedef struct { const char *name; size_t len; int32_t count; } jitClassEnt;
+
+LJLIB_CF(jit_classCounts)
+{
+  global_State *g = G(L);
+  GCobj *o;
+  GCtab *mts[JIT_CLASSCAP];
+  int32_t mtc[JIT_CLASSCAP];
+  GCstr *sk_class, *sk_type, *sk_name;
+  int32_t nmt = 0, i, j;
+  intptr_t nwalk = 0;
+  intptr_t ncd_total = 0;
+  char out[JIT_CLASSCAP * 64 + 256];
+  size_t olen = 0;
+  int stage = 1;
+
+  __try {
+    sk_class = lj_str_newlit(L, "__class");
+    sk_type = lj_str_newlit(L, "__type");
+    sk_name = lj_str_newlit(L, "__name");
+
+    for (o = gcref(g->gc.root); o != NULL && nwalk++ < (intptr_t)1 << 27; o = gcnext(o)) {
+      if ((uint8_t)o->gch.gct == (uint8_t)~LJ_TUDATA) {
+	GCtab *mt = tabref(gco2ud(o)->metatable);
+	if (mt == NULL) continue;
+	for (i = 0; i < nmt; i++) {
+	  if (mts[i] == mt) { mtc[i]++; goto done_ud; }
+	}
+	if (nmt < JIT_CLASSCAP) { mts[nmt] = mt; mtc[nmt] = 1; nmt++; }
+      done_ud:
+	;
+      } else if ((uint8_t)o->gch.gct == (uint8_t)~LJ_TCDATA) {
+	ncd_total++;
+      }
+    }
+    stage = 2;
+
+    {
+      jitClassEnt ent[JIT_CLASSCAP];
+      int32_t nent = 0;
+
+      for (i = 0; i < nmt && nent < JIT_CLASSCAP; i++) {
+	cTValue *tv = lj_tab_getstr(mts[i], sk_class);
+	if (tv == NULL || !tvisstr(tv)) tv = lj_tab_getstr(mts[i], sk_type);
+	if (tv == NULL || !tvisstr(tv)) tv = lj_tab_getstr(mts[i], sk_name);
+	if (tv != NULL && tvisstr(tv)) {
+	  GCstr *s = strV(tv);
+	  if (s->len < (MSize)(sizeof(out) - olen - 32)) {
+	    ent[nent].name = strdata(s);
+	    ent[nent].len = s->len;
+	    ent[nent].count = mtc[i];
+	    nent++;
+	  }
+	}
+      }
+      stage = 3;
+
+      for (i = 1; i < nent; i++) {
+	jitClassEnt tmp = ent[i];
+	for (j = i - 1; j >= 0 && ent[j].count < tmp.count; j--)
+	  ent[j + 1] = ent[j];
+	ent[j + 1] = tmp;
+      }
+      stage = 4;
+
+      for (i = 0; i < nent; i++) {
+	int ln = snprintf(out + olen, sizeof(out) - olen, "%7d  %.*s\n",
+			  (int)ent[i].count, (int)ent[i].len, ent[i].name);
+	if (ln < 0 || (size_t)ln >= sizeof(out) - olen) break;
+	olen += (size_t)ln;
+      }
+      if (ncd_total > 0) {
+	int ln = snprintf(out + olen, sizeof(out) - olen, "%7d  cdata (total)\n", (int)ncd_total);
+	if (ln > 0 && (size_t)ln < sizeof(out) - olen) olen += (size_t)ln;
+      }
+    }
+  } __except(EXCEPTION_EXECUTE_HANDLER) {
+    olen = 0;
+    snprintf(out, sizeof(out), "classCounts: internal error (stage %d)", stage);
+    olen = strlen(out);
+  }
+
+  lua_pushlstring(L, out, olen);
+  return 1;
 }
 
 LJLIB_PUSH(top-5) LJLIB_SET(os)
