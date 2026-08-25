@@ -244,7 +244,13 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
 {
   MMS mm = bcmode_mm(op);
 #if LJ_HASFFI
-  if (tviscdata(rb) || tviscdata(rc)) { 
+  if (tviscdata(rb) || tviscdata(rc)) {
+    /* Dispatch to cdata bitwise metamethods if the metatype defines them. */
+    CTState *cts = ctype_cts(L);
+    cTValue *mo = NULL;
+    if (tviscdata(rb)) mo = lj_ctype_meta(cts, cdataV(rb)->ctypeid, mm);
+    if (mo == NULL && tviscdata(rc)) mo = lj_ctype_meta(cts, cdataV(rc)->ctypeid, mm);
+    if (mo != NULL) return mmcall(L, lj_cont_ra, mo, rb, rc);
     CTypeID id = 0, id_ignore = 0;
     uint64_t b = lj_carith_checkbit64(L, rb, &id);
     uint64_t c = lj_carith_checkbit64(L, rc, op >= BC_BSHL ? &id_ignore : &id);
