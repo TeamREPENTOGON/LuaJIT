@@ -58,6 +58,26 @@ GCcdata *lj_cdata_newx(CTState *cts, CTypeID id, CTSize sz, CTInfo info)
     return lj_cdata_newv(cts->L, id, sz, ctype_align(info));
 }
 
+int lj_cdata_bs_match(CTState *cts, GCcdata *cd)
+{
+  CType *ct = ctype_raw(cts, cd->ctypeid);
+  CTypeID fid;
+  if (ct->size != 16 || !ctype_isstruct(ct->info)) return 0;
+  for (fid = ct->sib; fid; fid = ctype_get(cts, fid)->sib) {
+    CType *df = ctype_get(cts, fid);
+    CType *dc;
+    GCstr *nm;
+    if (!ctype_isfield(df->info) || !gcref(df->name)) return 0;
+    dc = ctype_rawchild(cts, df);
+    if (dc->size != 8 || !ctype_isnum(dc->info)) return 0;
+    nm = gco2str(gcref(df->name));
+    if (nm->len == 1 && strdata(nm)[0] == 'L' && df->size == 0) continue;
+    if (nm->len == 1 && strdata(nm)[0] == 'H' && df->size == 8) continue;
+    return 0;
+  }
+  return 1;
+}
+
 /* Free a C data object. */
 void LJ_FASTCALL lj_cdata_free(global_State *g, GCcdata *cd)
 {

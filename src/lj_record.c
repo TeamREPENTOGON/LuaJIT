@@ -17,6 +17,7 @@
 #include "lj_frame.h"
 #if LJ_HASFFI
 #include "lj_ctype.h"
+#include "lj_cdata.h"
 #include "lj_crecord.h"
 #endif
 #include "lj_bc.h"
@@ -44,6 +45,19 @@
 
 /* Emit raw IR without passing through optimizations. */
 #define emitir_raw(ot, a, b)	(lj_ir_set(J, (ot), (a), (b)), lj_ir_emit(J))
+
+#if LJ_HASFFI
+static int rec_cdata_has_mm(jit_State *J, cTValue *tv, MMS mm)
+{
+  CTState *cts = ctype_cts(J->L);
+  return lj_ctype_meta(cts, cdataV(tv)->ctypeid, mm) != NULL;
+}
+
+static int rec_cdata_is_bs(jit_State *J, cTValue *tv)
+{
+  return lj_cdata_bs_match(ctype_cts(J->L), cdataV(tv));
+}
+#endif
 
 /* -- Sanity checks ------------------------------------------------------- */
 
@@ -1122,6 +1136,19 @@ int lj_record_mm_lookup(jit_State *J, RecordIndex *ix, MMS mm)
       return 1;  /* Got metamethod or index table. */
     }
   } else {
+    /* Per-ctype metatype for cdata (matches interpreter cdata operator dispatch). */
+    if (LJ_HASFFI && tref_iscdata(ix->tab)) {
+      CTState *cts = ctype_cts(J->L);
+      cTValue *mo = lj_ctype_meta(cts, cdataV(&ix->tabv)->ctypeid, mm);
+      if (mo == NULL || !tvisfunc(mo)) {
+	ix->mt = TREF_NIL;
+	return 0;  /* No (function) metamethod. */
+      }
+      ix->mobjv = *mo;
+      ix->mobj = lj_ir_kgc(J, gcV(mo), IRT_FUNC);
+      ix->mt = TREF_NIL;
+      return 1;  /* Got metamethod. */
+    }
     /* Specialize to base metatable. Must flush mcode in lua_setmetatable(). */
     mt = tabref(basemt_obj(J2G(J), &ix->tabv));
     if (mt == NULL) {
@@ -2511,6 +2538,16 @@ void lj_record_ins(jit_State *J)
   case BC_BNOT:
 #if LJ_HASFFI
     if (tref_iscdata(rc)) {
+      if (rec_cdata_is_bs(J, rcv)) {
+	lj_trace_err(J, LJ_TRERR_NYIBC);  /* Interpreter fast path handles it. */
+	break;
+      }
+      if (rec_cdata_has_mm(J, rcv, MM_bnot)) {
+	ix.tab = rc;
+	copyTV(J->L, &ix.tabv, rcv);
+	rc = rec_mm_arith(J, &ix, MM_bnot);
+	break;
+      }
       rc = recff_bit64_bitop(J, rc, 0, rcv, NULL, IR_BNOT);
       break;
     }
@@ -2535,6 +2572,20 @@ void lj_record_ins(jit_State *J)
   case BC_BAND: case BC_BOR: case BC_BXOR:
 #if LJ_HASFFI
     if (tref_iscdata(rb) || tref_iscdata(rc)) {
+      if (tref_iscdata(rb) && tref_iscdata(rc) &&
+	  rec_cdata_is_bs(J, rbv) && rec_cdata_is_bs(J, rcv)) {
+	lj_trace_err(J, LJ_TRERR_NYIBC);  /* Interpreter fast path handles it. */
+	break;
+      }
+      MMS mmm = bcmode_mm(op);
+      if ((tref_iscdata(rb) && rec_cdata_has_mm(J, rbv, mmm)) ||
+	  (tref_iscdata(rc) && rec_cdata_has_mm(J, rcv, mmm))) {
+	ix.tab = rb; ix.key = rc;
+	copyTV(J->L, &ix.tabv, rbv);
+	copyTV(J->L, &ix.keyv, rcv);
+	rc = rec_mm_arith(J, &ix, mmm);
+	break;
+      }
       rc = recff_bit64_bitop(J, rb, rc, rbv, rcv, (int)op - (int)BC_BAND + (int)IR_BAND);
       break;
     }
@@ -2562,7 +2613,16 @@ void lj_record_ins(jit_State *J)
   case BC_BSHL: case BC_BSHR: case BC_BSAR:
 #if LJ_HASFFI
     {
+      MMS mmm = bcmode_mm(op);
       TRef xrb = rb, xrc = rc;
+      if ((tref_iscdata(rb) && rec_cdata_has_mm(J, rbv, mmm)) ||
+	  (tref_iscdata(rc) && rec_cdata_has_mm(J, rcv, mmm))) {
+	ix.tab = rb; ix.key = rc;
+	copyTV(J->L, &ix.tabv, rbv);
+	copyTV(J->L, &ix.keyv, rcv);
+	rc = rec_mm_arith(J, &ix, mmm);
+	break;
+      }
       if (recff_bit64_shift(J, &xrb, &xrc, rbv, rcv, (int)op - (int)BC_BSHL + (int)IR_BSHL)) {
 	rc = xrb;
 	break;

@@ -245,8 +245,30 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
   MMS mm = bcmode_mm(op);
 #if LJ_HASFFI
   if (tviscdata(rb) || tviscdata(rc)) {
-    /* Dispatch to cdata bitwise metamethods if the metatype defines them. */
     CTState *cts = ctype_cts(L);
+    if (tviscdata(rb) && (op == BC_BNOT || op == BC_BAND || op == BC_BOR || op == BC_BXOR) &&
+	lj_cdata_bs_match(cts, cdataV(rb)) &&
+	(op == BC_BNOT || (tviscdata(rc) && lj_cdata_bs_match(cts, cdataV(rc))))) {
+      GCcdata *cd = lj_cdata_new_(L, cdataV(rb)->ctypeid, 16);
+      uint64_t *dp = (uint64_t *)cdataptr(cd);
+      const uint64_t *bp = (const uint64_t *)cdataptr(cdataV(rb));
+      uint64_t bl = bp[0], bh = bp[1];
+      if (op == BC_BNOT) {
+	bl = ~bl; bh = ~bh;
+      } else {
+	const uint64_t *cp = (const uint64_t *)cdataptr(cdataV(rc));
+	switch (op) {
+	case BC_BAND: bl &= cp[0]; bh &= cp[1]; break;
+	case BC_BOR:  bl |= cp[0]; bh |= cp[1]; break;
+	case BC_BXOR: bl ^= cp[0]; bh ^= cp[1]; break;
+	default: break;
+	}
+      }
+      dp[0] = bl; dp[1] = bh;
+      setcdataV(L, ra, cd);
+      return NULL;
+    }
+    /* Dispatch to cdata bitwise metamethods if the metatype defines them. */
     cTValue *mo = NULL;
     if (tviscdata(rb)) mo = lj_ctype_meta(cts, cdataV(rb)->ctypeid, mm);
     if (mo == NULL && tviscdata(rc)) mo = lj_ctype_meta(cts, cdataV(rc)->ctypeid, mm);
