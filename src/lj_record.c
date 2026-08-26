@@ -1348,7 +1348,8 @@ static void rec_mm_comp_cdata(jit_State *J, RecordIndex *ix, int op, MMS mm)
     ix->tab = ix->key;
     copyTV(J->L, &ix->tabv, &ix->keyv);
   }
-  lj_record_mm_lookup(J, ix, mm);
+  if (!lj_record_mm_lookup(J, ix, mm) || !tref_isfunc(ix->mobj))
+    lj_trace_err(J, LJ_TRERR_NYICALL);
   rec_mm_callcomp(J, ix, op);
 }
 #endif
