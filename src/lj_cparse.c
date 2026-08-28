@@ -1370,6 +1370,12 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
     CTypeID lastid = sid;
     int lastdecl = 0;
     while (cp->tok != '}') {
+      int ispadding = 0;
+      if (cp->tok == CTOK_IDENT && !cp->val.id && cp->str->len == 7 &&
+	  !memcmp(strdata(cp->str), "padding", 7)) {
+	ispadding = 1;
+	cp_next(cp);
+      }
       CPDecl decl;
       CPscl scl = cp_decl_spec(cp, &decl, CDF_STATIC);
       decl.mode = scl ? CPARSE_MODE_DIRECT :
@@ -1397,12 +1403,14 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 	  CTypeID fieldid = lj_ctype_new(cp->cts, &ct);  /* Do this first. */
 	  CType *tct = ctype_raw(cp->cts, ctypeid);
 
+	  if (ispadding && decl.bits != CTSIZE_INVALID)
+	    cp_errmsg(cp, ':', LJ_ERR_BADVAL);
 	  if (decl.bits == CTSIZE_INVALID) {  /* Regular field. */
 	    if (ctype_isarray(tct->info) && tct->size == CTSIZE_INVALID)
 	      lastdecl = 1;  /* a[] or a[?] must be the last declared field. */
 
 	    /* Accept transparent struct/union/enum. */
-	    if (!decl.name) {
+	    if (!decl.name && !ispadding) {
 	      if (!((ctype_isstruct(tct->info) && !(tct->info & CTF_VLA)) ||
 		    ctype_isenum(tct->info)))
 		cp_err_token(cp, CTOK_IDENT);
@@ -1422,7 +1430,7 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 	  /* Create temporary field for layout phase. */
 	  ct->info = CTINFO(CT_FIELD, ctypeid + (bsz << CTSHIFT_BITCSZ));
 	  ct->size = decl.attr;
-	  if (decl.name) ctype_setname(ct, decl.name);
+	  if (decl.name && !ispadding) ctype_setname(ct, decl.name);
 
 	add_field:
 	  ctype_get(cp->cts, lastid)->sib = fieldid;
