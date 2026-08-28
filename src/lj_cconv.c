@@ -14,6 +14,7 @@
 #include "lj_cdata.h"
 #include "lj_cconv.h"
 #include "lj_ccallback.h"
+#include "lj_strscan.h"
 
 /* -- Conversion errors --------------------------------------------------- */
 
@@ -593,6 +594,14 @@ void lj_cconv_ct_tv(CTState *cts, CType *d,
 	sz = d->size;
       memcpy(dp, strdata(str), sz);
       return;
+    } else if (ctype_isnum(d->info)) {
+      TValue n;
+      if (!lj_strscan_number(str, &n))
+	goto err_conv;
+      n.n = tvisint(&n) ? (lua_Number)intV(&n) : numV(&n);
+      sp = (uint8_t *)&n.n;
+      sid = CTID_DOUBLE;
+      flags |= CCF_FROMTV;
     } else {  /* Otherwise pass it as a const char[]. */
       sp = (uint8_t *)strdata(str);
       sid = CTID_A_CCHAR;
