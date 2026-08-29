@@ -432,6 +432,8 @@ typedef struct jit_State {
   uint8_t needsnap;	/* Need snapshot before recording next bytecode. */
   IRType1 guardemit;	/* Accumulated IRT_GUARD for emitted instructions. */
   uint8_t bcskip;	/* Number of bytecode instructions to skip. */
+  IRRef u32ref;		/* Result of the last unsigned-32bit field read. */
+  IRRef cnt31ref;	/* Result of the last `x & mask` with mask <= 31. */
 
   FoldState fold;	/* Fold state. */
 

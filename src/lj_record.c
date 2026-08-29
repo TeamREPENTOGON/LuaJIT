@@ -139,6 +139,9 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused);
     dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
   if (irt == IRT_I64 || irt == IRT_U64) lj_needsplit(J);
   tr = emitir(IRT(IR_XLOAD, irt), dpr, 0);
+  if (irt == IRT_INT && ctype_isnum(fct->info) && !(fct->info & CTF_FP) &&
+      (fct->info & CTF_UNSIGNED))
+    J->u32ref = tref_ref(tr);
   if (irt == IRT_FLOAT)
     tr = rec_cdata_conv(J, tr, IRT_NUM, IRT_FLOAT, IRCONV_ANY);
   return tr;
@@ -1108,6 +1111,14 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
   BCReg baseadj = 0;
   for (i = 0; i < gotresults; i++)
     (void)getslot(J, rbase+i);  /* Ensure all results have a reference. */
+  if (J->u32ref != 0) {
+    for (i = 0; i < gotresults; i++) {
+      TRef tr = getslot(J, rbase+i);
+      if (tr && tref_ref(tr) == J->u32ref && tref_type(tr) == IRT_INT)
+	J->base[rbase+i] = emitir(IRT(IR_CONV, IRT_NUM), tr,
+				  (IRT_U32 << IRCONV_DSH) | IRT_U32);
+    }
+  }
   while (frame_ispcall(frame)) {  /* Immediately resolve pcall() returns. */
     BCReg cbase = (BCReg)frame_delta(frame);
     if (--J->framedepth <= 0)
@@ -1309,15 +1320,22 @@ int lj_record_mm_lookup(jit_State *J, RecordIndex *ix, MMS mm)
     /* Per-ctype metatype for cdata (matches interpreter cdata operator dispatch). */
     if (LJ_HASFFI && tref_iscdata(ix->tab)) {
       CTState *cts = ctype_cts(J->L);
-      cTValue *mo = lj_ctype_meta(cts, cdataV(&ix->tabv)->ctypeid, mm);
-      if (mo == NULL || !tvisfunc(mo)) {
+      GCcdata *cd = cdataV(&ix->tabv);
+      cTValue *mo = lj_ctype_meta(cts, cd->ctypeid, mm);
+      if (mo != NULL) {
+	if (tvisfunc(mo)) {
+	  ix->mobjv = *mo;
+	  ix->mobj = lj_ir_kgc(J, gcV(mo), IRT_FUNC);
+	  ix->mt = TREF_NIL;
+	  return 1;  /* Got metamethod. */
+	}
 	ix->mt = TREF_NIL;
-	return 0;  /* No (function) metamethod. */
+	return 0;
       }
-      ix->mobjv = *mo;
-      ix->mobj = lj_ir_kgc(J, gcV(mo), IRT_FUNC);
+    }
+    if (LJ_HASFFI && tref_iscdata(ix->tab) && mm != MM_call) {
       ix->mt = TREF_NIL;
-      return 1;  /* Got metamethod. */
+      return 0;
     }
     /* Specialize to base metatable. Must flush mcode in lua_setmetatable(). */
     mt = tabref(basemt_obj(J2G(J), &ix->tabv));
@@ -2520,6 +2538,12 @@ void lj_record_ins(jit_State *J)
 #define rbv	(&ix.tabv)
 #define rcv	(&ix.keyv)
 
+  {
+    BCOp curop = bc_op(*pc);
+    if (curop != BC_BSHL && curop != BC_BSHR && curop != BC_BSAR)
+      J->cnt31ref = 0;
+  }
+
   lbase = J->L->base;
   ins = *pc;
   op = bc_op(ins);
@@ -2609,7 +2633,11 @@ void lj_record_ins(jit_State *J)
   case BC_ISEQN: case BC_ISNEN:
   case BC_ISEQP: case BC_ISNEP:
 #if LJ_HASFFI
-    if (tref_iscdata(ra) || tref_iscdata(rc)) {
+    if (tref_iscdata(ra) != tref_iscdata(rc)) {
+      J->base[bc_a(ins)] = ((int)op & 1) ? TREF_TRUE : TREF_FALSE;
+      break;
+    }
+    if (tref_iscdata(ra) && tref_iscdata(rc)) {
       rec_mm_comp_cdata(J, &ix, op, MM_eq);
       break;
     }
@@ -2734,13 +2762,8 @@ void lj_record_ins(jit_State *J)
     if (tref_isnumber_str(rc)) {
       if (tref_isinteger(rc))
 	rc = emitir(IRTI(IR_BNOT), rc, 0);
-#if LJ_HASFFI
-      else
-	rc = recff_bit64_num(J, rc, 0, rcv, NULL, IR_BNOT);
-#else
       else
 	lj_trace_err(J, LJ_TRERR_NYIBC);
-#endif
     } else {
       ix.tab = rc;
       copyTV(J->L, &ix.tabv, rcv);
@@ -2779,62 +2802,43 @@ void lj_record_ins(jit_State *J)
     }
     if (tref_isinteger(rb) && tref_isinteger(rc))
       goto recbit;
-#if LJ_HASFFI
-    rc = recff_bit64_num(J, rb, rc, rbv, rcv,
-			 (int)op - (int)BC_BAND + (int)IR_BAND);
-#else
+    if (tref_isinteger(rb) && op == BC_BAND && rcv && tref_isk(rc) &&
+	(tvisint(rcv) ||
+	 (tvisnum(rcv) &&
+	  ((numV(rcv) >= 0.0 && numV(rcv) <= 4294967295.0 &&
+	    numV(rcv) == (double)(uint32_t)numV(rcv)) ||
+	   (numV(rcv) >= -2147483648.0 && numV(rcv) < 0.0 &&
+	    numV(rcv) == (double)(int32_t)numV(rcv)))))) {
+      rc = lj_opt_narrow_tobit(J, rc);
+      goto recbit;
+    }
     lj_trace_err(J, LJ_TRERR_NYIBC);
-#endif
     break;
   recbit:
     rc = emitir(IRTI((int)op - (int)BC_BAND + (int)IR_BAND), rb, rc);
+    if (op == BC_BAND && rcv && (tvisint(rcv) || tvisnum(rcv))) {
+      int32_t m = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
+      if (m >= 0 && m <= 31 && (tvisint(rcv) || numV(rcv) == (double)m))
+	J->cnt31ref = tref_ref(rc);
+    }
     break;
 
   case BC_BSHL: case BC_BSHR: case BC_BSAR:
-#if LJ_HASFFI
     {
-      MMS mmm = bcmode_mm(op);
-      TRef xrb = rb, xrc = rc;
-      if ((tref_iscdata(rb) && rec_cdata_has_mm(J, rbv, mmm)) ||
-	  (tref_iscdata(rc) && rec_cdata_has_mm(J, rcv, mmm))) {
-	ix.tab = rb; ix.key = rc;
-	copyTV(J->L, &ix.tabv, rbv);
-	copyTV(J->L, &ix.keyv, rcv);
-	rc = rec_mm_arith(J, &ix, mmm);
+      int safe = J->cnt31ref != 0 && J->cnt31ref == tref_ref(rc);
+      if (!safe && tref_isk(rc) && rcv && (tvisint(rcv) || tvisnum(rcv))) {
+	int32_t k = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
+	safe = k >= 0 && k <= 31 && (tvisint(rcv) || numV(rcv) == (double)k);
+      }
+      if (!safe)
+	lj_trace_err(J, LJ_TRERR_NYIBC);
+      if (tref_isinteger(rb)) {
+	TRef tsh = lj_opt_narrow_tobit(J, rc);
+	rc = emitir(IRTI((int)op - (int)BC_BSHL + (int)IR_BSHL), rb, tsh);
 	break;
       }
-      if (recff_bit64_shift(J, &xrb, &xrc, rbv, rcv, (int)op - (int)BC_BSHL + (int)IR_BSHL)) {
-	rc = xrb;
-	break;
-      }
-      rc = xrc;  /* Shift amount may have been converted. */
+      lj_trace_err(J, LJ_TRERR_NYIBC);
     }
-#endif
-    if (tref_isinteger(rb) &&
-      (tref_isnumber_str(rc) || tref_typerange(rc, IRT_I64, IRT_U64))) {
-      TRef tsh;
-      tsh = lj_opt_narrow_tobit(J, rc);
-      IRType t = (tref_isinteger(tsh)) ? IRT_INT : tref_type(tsh);
-      if (!(op < IR_BROL ? LJ_TARGET_MASKSHIFT : LJ_TARGET_MASKROT) &&
-	  !tref_isk(tsh))
-	tsh = emitir(IRT(IR_BAND, t), tsh, lj_ir_kint(J, 63));
-      rc = emitir(IRTI((int)op - (int)BC_BSHL + (int)IR_BSHL), rb, tsh);
-      break;
-    }
-    if (!((tref_isnumber_str(rb) || tref_typerange(rb, IRT_I64, IRT_U64)) &&
-      tref_isnumber_str(rc))) {
-      ix.tab = rb; ix.key = rc;
-      copyTV(J->L, &ix.tabv, rbv);
-      copyTV(J->L, &ix.keyv, rcv);
-      rc = rec_mm_arith(J, &ix, bcmode_mm(op));
-      break;
-    }
-#if LJ_HASFFI
-    rc = recff_bit64_shift_num(J, rb, rc, rbv, rcv,
-			       (int)op - (int)BC_BSHL + (int)IR_BSHL);
-#else
-    lj_trace_err(J, LJ_TRERR_NYIBC);
-#endif
     break;
 
   /* -- Miscellaneous ops ------------------------------------------------- */
@@ -3176,6 +3180,8 @@ void lj_record_setup(jit_State *J)
   J->loopunroll = J->param[JIT_P_loopunroll];
   J->tailcalled = 0;
   J->loopref = 0;
+  J->u32ref = 0;
+  J->cnt31ref = 0;
 
   J->bc_min = NULL;  /* Means no limit. */
   J->bc_extent = ~(MSize)0;

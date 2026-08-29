@@ -1776,13 +1776,31 @@ void LJ_FASTCALL recff_ffi_typeof(jit_State *J, RecordFFData *rd)
 
 void LJ_FASTCALL recff_ffi_istype(jit_State *J, RecordFFData *rd)
 {
-  argv2ctype(J, J->base[0], &rd->argv[0]);
-  if (tref_iscdata(J->base[1])) {
-    argv2ctype(J, J->base[1], &rd->argv[1]);
-    J->postproc = LJ_POST_FIXBOOL;
-    J->base[0] = TREF_TRUE;
-  } else {
+  CTypeID ctid;
+  if (!(tref_iscdata(J->base[1]) || tref_istype(J->base[1], IRT_PGC))) {
     J->base[0] = TREF_FALSE;
+    return;
+  }
+  if (tref_isstr(J->base[0])) {
+    ctid = argv2ctype(J, J->base[0], &rd->argv[0]);
+  } else {
+    GCcdata *cd = cdataV(&rd->argv[0]);
+    if (cd->ctypeid == CTID_CTYPEID) {
+      ctid = *(CTypeID *)cdataptr(cd);
+      TRef oid = emitir(IRT(IR_FLOAD, IRT_U16), J->base[0], IRFL_CDATA_CTYPEID);
+      emitir(IRTG(IR_EQ, IRT_INT), oid, lj_ir_kint(J, (int32_t)CTID_CTYPEID));
+      TRef tid = emitir(IRT(IR_FLOAD, IRT_INT), J->base[0], IRFL_CDATA_INT);
+      emitir(IRTG(IR_EQ, IRT_INT), tid, lj_ir_kint(J, (int32_t)ctid));
+    } else {
+      ctid = cd->ctypeid;
+      TRef oid = emitir(IRT(IR_FLOAD, IRT_U16), J->base[0], IRFL_CDATA_CTYPEID);
+      emitir(IRTG(IR_EQ, IRT_INT), oid, lj_ir_kint(J, (int32_t)ctid));
+    }
+  }
+  {
+    TRef oid = emitir(IRT(IR_FLOAD, IRT_U16), J->base[1], IRFL_CDATA_CTYPEID);
+    J->postproc = LJ_POST_FIXBOOL;
+    J->base[0] = emitir(IRTG(IR_EQ, IRT_INT), oid, lj_ir_kint(J, (int32_t)ctid));
   }
 }
 
@@ -2012,7 +2030,7 @@ TRef recff_bit64_shift_num(jit_State *J, TRef rb, TRef rc,
     int32_t k = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
     tsh = lj_ir_kint(J, k);
   } else if (rcv) {
-    tsh = lj_opt_narrow_tobit(J, rc);
+    lj_trace_err(J, LJ_TRERR_NYIBC);
   } else {
     lj_trace_err(J, LJ_TRERR_NYIBC);
   }

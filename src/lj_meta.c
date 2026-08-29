@@ -316,8 +316,13 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
     } else {
       if (checki32((int64_t)b))
 	setintV(ra, (int32_t)b);
-      else
+      else if ((int64_t)b >= -(1LL << 53) && (int64_t)b <= (1LL << 53))
 	setnumV(ra, (lua_Number)(int64_t)b);
+      else {
+	GCcdata *cd = lj_cdata_new_(L, CTID_INT64, 8);
+	*(int64_t *)cdataptr(cd) = (int64_t)b;
+	setcdataV(L, ra, cd);
+      }
     }
     return NULL;
   }
@@ -345,8 +350,13 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
       }
       if (checki32(bv))
 	setintV(ra, (int32_t)bv);
-      else
+      else if (bv >= -(1LL << 53) && bv <= (1LL << 53))
 	setnumV(ra, (lua_Number)bv);
+      else {
+	GCcdata *cd = lj_cdata_new_(L, CTID_INT64, 8);
+	*(int64_t *)cdataptr(cd) = bv;
+	setcdataV(L, ra, cd);
+      }
       return NULL;
     }
 /* RGON NOTE: We only care about x86 since Isaac is a 32 bit executable. */
