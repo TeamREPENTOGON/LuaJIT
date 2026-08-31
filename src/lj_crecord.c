@@ -894,6 +894,8 @@ again:
       CType *fct;
       fct = lj_ctype_getfield(cts, ct, name, &fofs);
       if (fct) {
+	if (ctype_isprivate(fct->info))
+	  lj_trace_err(J, LJ_TRERR_NYICONV);
 	ofs += (ptrdiff_t)fofs;
 	/* Always specialize to the field name. */
 	if (stridx)
@@ -1802,6 +1804,41 @@ void LJ_FASTCALL recff_ffi_istype(jit_State *J, RecordFFData *rd)
     J->postproc = LJ_POST_FIXBOOL;
     J->base[0] = emitir(IRTG(IR_EQ, IRT_INT), oid, lj_ir_kint(J, (int32_t)ctid));
   }
+}
+
+void LJ_FASTCALL recff_ffi_getprivate(jit_State *J, RecordFFData *rd)
+{
+  RecordIndex ix;
+  if (!tref_iscdata(J->base[0]) || !tref_isstr(J->base[1]))
+    lj_trace_err(J, LJ_TRERR_BADTYPE);
+  ix.tab = J->base[0];
+  ix.key = J->base[1];
+  copyTV(J->L, &ix.tabv, &rd->argv[0]);
+  copyTV(J->L, &ix.keyv, &rd->argv[1]);
+  ix.idxchain = LJ_MAX_IDXCHAIN;
+  ix.mobj = 0;
+  ix.mt = 0;
+  J->base[0] = rec_cdata_field_get(J, &ix, 1);
+  if (!J->base[0]) lj_trace_err(J, LJ_TRERR_NYICONV);
+}
+
+void LJ_FASTCALL recff_ffi_setprivate(jit_State *J, RecordFFData *rd)
+{
+  RecordIndex ix;
+  if (!tref_iscdata(J->base[0]) || !tref_isstr(J->base[1]) || !J->base[2])
+    lj_trace_err(J, LJ_TRERR_BADTYPE);
+  ix.tab = J->base[0];
+  ix.key = J->base[1];
+  ix.val = J->base[2];
+  copyTV(J->L, &ix.tabv, &rd->argv[0]);
+  copyTV(J->L, &ix.keyv, &rd->argv[1]);
+  copyTV(J->L, &ix.valv, &rd->argv[2]);
+  ix.idxchain = LJ_MAX_IDXCHAIN;
+  ix.mobj = 0;
+  ix.mt = 0;
+  if (!rec_cdata_field_set(J, &ix, 1)) lj_trace_err(J, LJ_TRERR_NYICONV);
+  J->needsnap = 1;
+  rd->nres = 0;
 }
 
 void LJ_FASTCALL recff_ffi_abi(jit_State *J, RecordFFData *rd)

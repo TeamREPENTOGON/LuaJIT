@@ -68,6 +68,7 @@ LJ_STATIC_ASSERT(((int)CT_STRUCT & (int)CT_ARRAY) == CT_STRUCT);
 #define CTF_UNSIGNED	0x00800000u	/* Unsigned: NUM, BITFIELD. */
 #define CTF_LONG	0x00400000u	/* Long: NUM. */
 #define CTF_VLA		0x00100000u	/* Variable-length: ARRAY, STRUCT. */
+#define CTF_PRIVATE	0x08000000u	/* Private: FIELD (not public). */
 #define CTF_REF		0x00800000u	/* Reference: PTR. */
 #define CTF_VECTOR	0x08000000u	/* Vector: ARRAY. */
 #define CTF_COMPLEX	0x04000000u	/* Complex: ARRAY. */
@@ -208,6 +209,7 @@ typedef struct CTState {
 #define ctype_istypedef(info)	(ctype_type((info)) == CT_TYPEDEF)
 #define ctype_isattrib(info)	(ctype_type((info)) == CT_ATTRIB)
 #define ctype_isfield(info)	(ctype_type((info)) == CT_FIELD)
+#define ctype_isprivate(info)	((info) & CTF_PRIVATE)
 #define ctype_isbitfield(info)	(ctype_type((info)) == CT_BITFIELD)
 #define ctype_isconstval(info)	(ctype_type((info)) == CT_CONSTVAL)
 #define ctype_isextern(info)	(ctype_type((info)) == CT_EXTERN)

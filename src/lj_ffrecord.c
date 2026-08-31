@@ -1610,7 +1610,7 @@ void lj_ffrecord_func(jit_State *J)
     ix.mt = 0;
     {
       TRef base; CTSize ofs; int fused;
-      CType *fct = rec_cdata_field_resolve(J, &ix, &base, &ofs, &fused);
+      CType *fct = rec_cdata_field_resolve(J, &ix, &base, &ofs, &fused, 0);
       if (fct && rec_cdata_field_irt(ctype_cts(J->L), fct) >= 0) {
 	/* Direct scalar field: intercepted below. */
       } else {
@@ -1632,11 +1632,11 @@ void lj_ffrecord_func(jit_State *J)
 	ix.val = v1;
       }
       copyTV(J->L, &ix.valv, &J->L->base[2]);
-      if (!rec_cdata_field_set(J, &ix)) goto stock;
+      if (!rec_cdata_field_set(J, &ix, 0)) goto stock;
       J->needsnap = 1;
     } else {
       ix.val = 0;
-      if (!rec_cdata_field_get(J, &ix)) goto stock;  /* Fused field read. */
+      if (!rec_cdata_field_get(J, &ix, 0)) goto stock;
     }
     if (J->postproc == LJ_POST_NONE) J->postproc = LJ_POST_FFRETRY;
     return;

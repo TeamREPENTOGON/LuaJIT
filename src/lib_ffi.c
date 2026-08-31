@@ -152,7 +152,7 @@ LJLIB_CF(ffi_meta___index)	LJLIB_REC(cdata_index 0)
   TValue *o = L->base;
   if (!(o+1 < L->top && tviscdata(o)))  /* Also checks for presence of key. */
     lj_err_argt(L, 1, LUA_TCDATA);
-  ct = lj_cdata_index(cts, cdataV(o), o+1, &p, &qual);
+  ct = lj_cdata_index(cts, cdataV(o), o+1, &p, &qual, 0);
   if ((qual & 1))
     return ffi_index_meta(L, cts, ct, MM_index);
   if (lj_cdata_get(cts, ct, L->top-1, p))
@@ -169,7 +169,7 @@ LJLIB_CF(ffi_meta___newindex)	LJLIB_REC(cdata_index 1)
   TValue *o = L->base;
   if (!(o+2 < L->top && tviscdata(o)))  /* Also checks for key and value. */
     lj_err_argt(L, 1, LUA_TCDATA);
-  ct = lj_cdata_index(cts, cdataV(o), o+1, &p, &qual);
+  ct = lj_cdata_index(cts, cdataV(o), o+1, &p, &qual, 0);
   if ((qual & 1)) {
     if ((qual & CTF_CONST))
       lj_err_caller(L, LJ_ERR_FFI_WRCONST);
@@ -610,6 +610,41 @@ LJLIB_CF(ffi_istype)	LJLIB_REC(ffi_istype)
   setboolV(L->top-1, b);
   setboolV(&G(L)->tmptv2, b);  /* Remember for trace recorder. */
   return 1;
+}
+
+/* Reads a private cdata field. */
+LJLIB_CF(ffi_getprivate)	LJLIB_REC(.)
+{
+  CTState *cts = ctype_cts(L);
+  CTInfo qual = 0;
+  CType *ct;
+  uint8_t *p;
+  TValue *o = L->base;
+  if (!(o+1 < L->top && tviscdata(o)))
+    lj_err_argt(L, 1, LUA_TCDATA);
+  ct = lj_cdata_index(cts, cdataV(o), o+1, &p, &qual, 1);
+  if ((qual & 1))
+    return ffi_index_meta(L, cts, ct, MM_index);
+  if (lj_cdata_get(cts, ct, L->top-1, p))
+    lj_gc_check(L);
+  return 1;
+}
+
+/* Writes a private cdata field. */
+LJLIB_CF(ffi_setprivate)	LJLIB_REC(.)
+{
+  CTState *cts = ctype_cts(L);
+  CTInfo qual = 0;
+  CType *ct;
+  uint8_t *p;
+  TValue *o = L->base;
+  if (!(o+2 < L->top && tviscdata(o)))
+    lj_err_argt(L, 1, LUA_TCDATA);
+  ct = lj_cdata_index(cts, cdataV(o), o+1, &p, &qual, 1);
+  if ((qual & 1))
+    return ffi_index_meta(L, cts, ct, MM_newindex);
+  lj_cdata_set(cts, ct, p, o+2, qual);
+  return 0;
 }
 
 LJLIB_CF(ffi_sizeof)	LJLIB_REC(ffi_xof FF_ffi_sizeof)

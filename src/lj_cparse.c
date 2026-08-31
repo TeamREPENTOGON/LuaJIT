@@ -1318,7 +1318,8 @@ static void cp_struct_layout(CPState *cp, CTypeID sid, CTInfo sattr)
 	bofs = (bofs + amask) & ~amask;  /* Start new aligned field. */
 	ct->size = (bofs >> 3);  /* Store field offset. */
 	if (ctype_isfield(ct->info))
-	  ct->info = CTINFO(CT_FIELD, ctype_cid(ct->info)) + CTALIGN(align);
+	  ct->info = CTINFO(CT_FIELD, ctype_cid(ct->info)) +
+		     CTALIGN(align) + (ct->info & CTF_PRIVATE);
       } else {  /* Bitfield. */
 	if (bsz == 0 || (attr & CTFP_ALIGNED) ||
 	    (!((attr|sattr) & CTFP_PACKED) && (bofs & amask) + bsz > csz))
@@ -1371,9 +1372,14 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
     int lastdecl = 0;
     while (cp->tok != '}') {
       int ispadding = 0;
+      int isprivate = 0;
       if (cp->tok == CTOK_IDENT && !cp->val.id && cp->str->len == 7 &&
-	  !memcmp(strdata(cp->str), "padding", 7)) {
-	ispadding = 1;
+	  (memcmp(strdata(cp->str), "padding", 7) == 0 ||
+	   memcmp(strdata(cp->str), "private", 7) == 0)) {
+	if (strdata(cp->str)[1] == 'a')
+	  ispadding = 1;
+	else
+	  isprivate = 1;
 	cp_next(cp);
       }
       CPDecl decl;
@@ -1403,11 +1409,14 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 	  CTypeID fieldid = lj_ctype_new(cp->cts, &ct);  /* Do this first. */
 	  CType *tct = ctype_raw(cp->cts, ctypeid);
 
-	  if (ispadding && decl.bits != CTSIZE_INVALID)
+	  if ((ispadding || isprivate) && decl.bits != CTSIZE_INVALID)
 	    cp_errmsg(cp, ':', LJ_ERR_BADVAL);
 	  if (decl.bits == CTSIZE_INVALID) {  /* Regular field. */
 	    if (ctype_isarray(tct->info) && tct->size == CTSIZE_INVALID)
 	      lastdecl = 1;  /* a[] or a[?] must be the last declared field. */
+
+	    if (isprivate && !decl.name)
+	      cp_errmsg(cp, ':', LJ_ERR_BADVAL);
 
 	    /* Accept transparent struct/union/enum. */
 	    if (!decl.name && !ispadding) {
@@ -1430,7 +1439,10 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 	  /* Create temporary field for layout phase. */
 	  ct->info = CTINFO(CT_FIELD, ctypeid + (bsz << CTSHIFT_BITCSZ));
 	  ct->size = decl.attr;
-	  if (decl.name && !ispadding) ctype_setname(ct, decl.name);
+	  if (decl.name && !ispadding) {
+	    ctype_setname(ct, decl.name);
+	    if (isprivate) ct->info |= CTF_PRIVATE;
+	  }
 
 	add_field:
 	  ctype_get(cp->cts, lastid)->sib = fieldid;

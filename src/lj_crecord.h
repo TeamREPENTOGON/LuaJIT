@@ -22,6 +22,8 @@ LJ_FUNC void LJ_FASTCALL recff_ffi_copy(jit_State *J, RecordFFData *rd);
 LJ_FUNC void LJ_FASTCALL recff_ffi_fill(jit_State *J, RecordFFData *rd);
 LJ_FUNC void LJ_FASTCALL recff_ffi_typeof(jit_State *J, RecordFFData *rd);
 LJ_FUNC void LJ_FASTCALL recff_ffi_istype(jit_State *J, RecordFFData *rd);
+LJ_FUNC void LJ_FASTCALL recff_ffi_getprivate(jit_State *J, RecordFFData *rd);
+LJ_FUNC void LJ_FASTCALL recff_ffi_setprivate(jit_State *J, RecordFFData *rd);
 LJ_FUNC void LJ_FASTCALL recff_ffi_abi(jit_State *J, RecordFFData *rd);
 LJ_FUNC void LJ_FASTCALL recff_ffi_xof(jit_State *J, RecordFFData *rd);
 LJ_FUNC void LJ_FASTCALL recff_ffi_gc(jit_State *J, RecordFFData *rd);

@@ -127,7 +127,7 @@ void lj_cdata_setfin(lua_State *L, GCcdata *cd, GCobj *obj, uint32_t it)
 
 /* Index C data by a TValue. Return CType and pointer. */
 CType *lj_cdata_index(CTState *cts, GCcdata *cd, cTValue *key, uint8_t **pp,
-		      CTInfo *qual)
+		      CTInfo *qual, int allowprivate)
 {
   uint8_t *p = (uint8_t *)cdataptr(cd);
   CType *ct = ctype_get(cts, cd->ctypeid);
@@ -183,6 +183,8 @@ collect_attrib:
       CTSize ofs;
       CType *fct = lj_ctype_getfieldq(cts, ct, name, &ofs, qual);
       if (fct) {
+	if (!allowprivate && ctype_isprivate(fct->info))
+	  lj_err_callerv(cts->L, LJ_ERR_FFI_PRIVATE, strdata(name));
 	*pp = p + ofs;
 	return fct;
       }
