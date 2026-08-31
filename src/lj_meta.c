@@ -345,18 +345,8 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
       }
       if (checki32(bv))
 	setintV(ra, (int32_t)bv);
-      else if (bv >= -((int64_t)1 << 53) && bv <= ((int64_t)1 << 53))
-	setnumV(ra, (lua_Number)bv);
-#if LJ_HASFFI
-      else {
-	GCcdata *cd = lj_cdata_new_(L, CTID_INT64, 8);
-	*(int64_t *)cdataptr(cd) = bv;
-	setcdataV(L, ra, cd);
-      }
-#else
       else
 	setnumV(ra, (lua_Number)bv);
-#endif
       return NULL;
     }
 /* RGON NOTE: We only care about x86 since Isaac is a 32 bit executable. */

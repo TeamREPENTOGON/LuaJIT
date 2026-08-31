@@ -100,6 +100,15 @@ static MSize snapshot_slots(jit_State *J, SnapEntry *map, BCReg nslots)
       }
       if (LJ_SOFTFP32 && irt_isnum(ir->t))
 	sn |= SNAP_SOFTFPNUM;
+#if LJ_32 && LJ_HASFFI
+      if (tref_typerange(tr, IRT_I64, IRT_U64)) {
+	tr = emitir(IRT(IR_CONV, IRT_NUM), ref,
+		    (IRT_NUM << IRCONV_DSH) | irt_type(ir->t));
+	ref = tref_ref(tr);
+	ir = &J->cur.ir[ref];
+	sn = SNAP_TR(s, tr);
+      }
+#endif
       map[n++] = sn;
     }
   }

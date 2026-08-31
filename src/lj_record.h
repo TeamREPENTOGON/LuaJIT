@@ -8,6 +8,7 @@
 
 #include "lj_obj.h"
 #include "lj_jit.h"
+#include "lj_ctype.h"
 
 #if LJ_HASJIT
 /* Context for recording an indexed load/store. */
@@ -42,6 +43,12 @@ LJ_FUNC int lj_record_next(jit_State *J, RecordIndex *ix);
 
 LJ_FUNC void lj_record_ins(jit_State *J);
 LJ_FUNC void lj_record_setup(jit_State *J);
+
+LJ_FUNC int rec_cdata_field_irt(CTState *cts, CType *ct);
+LJ_FUNC CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
+				     TRef *basep, CTSize *ofs, int *fused);
+LJ_FUNC TRef rec_cdata_field_get(jit_State *J, RecordIndex *ix);
+LJ_FUNC int rec_cdata_field_set(jit_State *J, RecordIndex *ix);
 #endif
 
 #endif

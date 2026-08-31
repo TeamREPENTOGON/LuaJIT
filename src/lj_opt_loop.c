@@ -341,15 +341,28 @@ static void loop_unroll(LoopState *lps)
 	  }
 	  /* Check all loop-carried dependencies for type instability. */
 	  if (!irt_sametype(t, irr->t)) {
-	    if (irt_isinteger(t) && irt_isinteger(irr->t))
+	    if (irt_isinteger(t) && irt_isinteger(irr->t)) {
 	      continue;
-	    else if (irt_isnum(t) && irt_isinteger(irr->t))  /* Fix int->num. */
-	      ref = tref_ref(emitir(IRTN(IR_CONV), ref, IRCONV_NUM_INT));
-	    else if (irt_isnum(irr->t) && irt_isinteger(t))  /* Fix num->int. */
-	      ref = tref_ref(emitir(IRTGI(IR_CONV), ref,
-				    IRCONV_INT_NUM|IRCONV_CHECK));
-	    else
+	    } else if (irt_isnum(t) && irt_typerange(irr->t, IRT_I8, IRT_U64)) {
+	      /* Fix int->num, also for 64 bit loop carries. */
+	      if (irt_typerange(irr->t, IRT_I64, IRT_U64))
+		ref = tref_ref(emitir(IRTN(IR_CONV), ref,
+				      (IRCONV_NUM_INT & ~IRCONV_SRCMASK) |
+				      irt_type(irr->t)));
+	      else
+		ref = tref_ref(emitir(IRTN(IR_CONV), ref, IRCONV_NUM_INT));
+	    } else if (irt_isnum(irr->t) && irt_typerange(t, IRT_I8, IRT_U64)) {
+	      /* Fix num->int, also for 64 bit loop carries. */
+	      if (irt_typerange(t, IRT_I64, IRT_U64))
+		ref = tref_ref(emitir(IRT(IR_CONV, irt_type(t)), ref,
+				      (irt_type(t) << IRCONV_DSH) |
+				      IRT_NUM | IRCONV_CHECK));
+	      else
+		ref = tref_ref(emitir(IRTGI(IR_CONV), ref,
+				      IRCONV_INT_NUM|IRCONV_CHECK));
+	    } else {
 	      lj_trace_err(J, LJ_TRERR_TYPEINS);
+	    }
 	    subst[ins] = (IRRef1)ref;
 	    irr = IR(ref);
 	    goto phiconv;

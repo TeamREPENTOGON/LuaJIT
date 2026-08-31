@@ -1595,6 +1595,53 @@ static uint32_t recdef_lookup(GCfunc *fn)
 /* Record entry to a fast function or C function. */
 void lj_ffrecord_func(jit_State *J)
 {
+  if (J->framedepth &&
+      (J->fn->c.ffid == FF_ffi_meta___index ||
+       J->fn->c.ffid == FF_ffi_meta___newindex) &&
+      tref_iscdata(J->base[0]) && tvisstr(&J->L->base[1])) {
+    RecordIndex ix;
+    int isnew = J->fn->c.ffid == FF_ffi_meta___newindex;
+    ix.tab = J->base[0];
+    ix.key = J->base[1];
+    copyTV(J->L, &ix.tabv, &J->L->base[0]);
+    copyTV(J->L, &ix.keyv, &J->L->base[1]);
+    ix.idxchain = LJ_MAX_IDXCHAIN;
+    ix.mobj = 0;
+    ix.mt = 0;
+    {
+      TRef base; CTSize ofs; int fused;
+      CType *fct = rec_cdata_field_resolve(J, &ix, &base, &ofs, &fused);
+      if (fct && rec_cdata_field_irt(ctype_cts(J->L), fct) >= 0) {
+	/* Direct scalar field: intercepted below. */
+      } else {
+	goto stock;  /* Metatype/non-field lookup: stock handler. */
+      }
+    }
+    if (isnew && J->L->top - J->L->base >= 3) {
+      TRef v1 = J->base[1], v2 = J->base[2];
+      /* After a recorded TSETS that already wrote a direct scalar field,
+      ** the interpreter re-dispatches __newindex in the *same* caller
+      ** frame, so the recorder's argument slots still alias it:
+      ** base[0]=cdata, base[1]=the stored value (the TSETS destination
+      ** register), base[2]=whatever preceded it (often a constant).
+      ** A string-typed base[1] means the args were properly re-mapped to
+      ** [cdata, key, value] instead, i.e. value = base[2]. */
+      if (tref_isstr(v1)) {
+	ix.val = v2;
+      } else {
+	ix.val = v1;
+      }
+      copyTV(J->L, &ix.valv, &J->L->base[2]);
+      if (!rec_cdata_field_set(J, &ix)) goto stock;
+      J->needsnap = 1;
+    } else {
+      ix.val = 0;
+      if (!rec_cdata_field_get(J, &ix)) goto stock;  /* Fused field read. */
+    }
+    if (J->postproc == LJ_POST_NONE) J->postproc = LJ_POST_FFRETRY;
+    return;
+  }
+stock:
   RecordFFData rd;
   uint32_t m = recdef_lookup(J->fn);
   rd.data = m & 0xff;

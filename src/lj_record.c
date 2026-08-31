@@ -57,6 +57,173 @@ static int rec_cdata_is_bs(jit_State *J, cTValue *tv)
 {
   return lj_cdata_bs_match(ctype_cts(J->L), cdataV(tv));
 }
+
+/* Map a scalar member ctype to an IR type (-1 if not recordable here). */
+int rec_cdata_field_irt(CTState *cts, CType *ct)
+{
+  CTInfo info = ct->info;
+  if (ctype_isenum(info)) { ct = ctype_child(cts, ct); info = ct->info; }
+  if (ctype_isnum(info)) {
+    if (info & CTF_BOOL) return -1;
+    if (info & CTF_FP) {
+      if (ct->size == 4) return IRT_FLOAT;
+      if (ct->size == 8) return IRT_NUM;
+      return -1;
+    }
+    if (ct->size <= 4) return IRT_INT;
+    if (ct->size == 8) return (info & CTF_UNSIGNED) ? IRT_U64 : IRT_I64;
+    return -1;
+  }
+  if (ctype_isptr(info) || ctype_isref(info)) return IRT_PTR;
+  return -1;
+}
+CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
+			       TRef *basep, CTSize *ofs,
+			       int *fused)
+{
+  CTState *cts = ctype_cts(J->L);
+  GCcdata *cd = cdataV(&ix->tabv);
+  CType *ct = ctype_raw(cts, cd->ctypeid);
+  CType *fct;
+  TRef base;
+
+  if (!tvisstr(&ix->keyv)) return NULL;
+  while (ctype_isattrib(ct->info)) ct = ctype_child(cts, ct);
+  if (ctype_isref(ct->info)) {
+    base = emitir(IRT(IR_FLOAD, IRT_PTR), ix->tab, IRFL_CDATA_PTR);
+    base = emitir(IRT(IR_XLOAD, IRT_PTR), base, 0);
+    ct = ctype_child(cts, ct);
+    *fused = 0;
+  } else if (ctype_isptr(ct->info)) {
+    CType *cc = ctype_rawchild(cts, ct);
+    if (!ctype_isstruct(cc->info)) return NULL;
+    base = emitir(IRT(IR_FLOAD, IRT_PTR), ix->tab, IRFL_CDATA_PTR);
+    base = emitir(IRT(IR_XLOAD, IRT_PTR), base, 0);
+    ct = cc;
+    *fused = 0;
+  } else if (ctype_isstruct(ct->info)) {
+    *fused = 1;
+  } else {
+    return NULL;
+  }
+  while (ctype_isattrib(ct->info)) ct = ctype_child(cts, ct);
+  fct = lj_ctype_getfieldq(cts, ct, strV(&ix->keyv), ofs, NULL);
+  if (!fct) return NULL;
+  *basep = base;
+  return ctype_rawchild(cts, fct);
+}
+
+static TRef rec_cdata_conv(jit_State *J, TRef a, IRType dt, IRType st,
+			   uint32_t mode)
+{
+  return emitir(IRT(IR_CONV, dt), a, ((dt<<IRCONV_DSH)|st)|mode);
+}
+
+/* Record a direct read of a scalar cdata struct field. */
+TRef rec_cdata_field_get(jit_State *J, RecordIndex *ix)
+{
+  CTState *cts = ctype_cts(J->L);
+  CType *fct;
+  TRef base, dpr, tr;
+  int irt;
+  CTSize ofs;
+  int fused;
+fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused);
+  if (!fct) return 0;
+  irt = rec_cdata_field_irt(cts, fct);
+  if (irt < 0) return 0;
+  if (fused)
+    dpr = emitir(IRT(IR_ADD, IRT_PTR), ix->tab,
+		 lj_ir_kintp(J, (ptrdiff_t)sizeof(GCcdata) + ofs));
+  else
+    dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
+  if (irt == IRT_I64 || irt == IRT_U64) lj_needsplit(J);
+  tr = emitir(IRT(IR_XLOAD, irt), dpr, 0);
+  if (irt == IRT_FLOAT)
+    tr = rec_cdata_conv(J, tr, IRT_NUM, IRT_FLOAT, IRCONV_ANY);
+  return tr;
+}
+
+/* Record a direct write to a scalar cdata struct field. */
+int rec_cdata_field_set(jit_State *J, RecordIndex *ix)
+{
+  CTState *cts = ctype_cts(J->L);
+  CType *fct;
+  TRef base, dpr, val = ix->val;
+  int irt;
+  CTSize ofs;
+  int fused;
+fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused);
+  if (!fct) return 0;
+  irt = rec_cdata_field_irt(cts, fct);
+  if (irt < 0) return 0;
+  if (fused)
+    dpr = emitir(IRT(IR_ADD, IRT_PTR), ix->tab,
+		 lj_ir_kintp(J, (ptrdiff_t)sizeof(GCcdata) + ofs));
+  else
+    dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
+  switch (irt) {
+  case IRT_PTR:
+    if (tref_isstr(val)) {
+      val = emitir(IRT(IR_ADD, IRT_PTR), val,
+		   lj_ir_kintp(J, (ptrdiff_t)sizeof(GCstr)));
+    } else if (tref_islightud(val)) {
+    } else if (tref_iscdata(val)) {
+      val = emitir(IRT(IR_FLOAD, IRT_PTR), val, IRFL_CDATA_PTR);
+    } else if (tref_isnil(val)) {
+      val = lj_ir_kptr(J, NULL);
+    } else {
+      return 0;
+    }
+    break;
+  case IRT_I64: case IRT_U64:
+    lj_needsplit(J);
+    if (tref_isinteger(val)) {
+      val = rec_cdata_conv(J, val, irt, IRT_INT, IRCONV_ANY|IRCONV_SEXT);
+    } else if (tref_isnum(val)) {
+      val = rec_cdata_conv(J, val, irt, IRT_NUM, IRCONV_ANY);
+    } else if (tref_type(val) == (uint32_t)irt) {
+    } else {
+      return 0;
+    }
+    break;
+  case IRT_INT:
+    if (tref_isinteger(val)) {
+    } else if (tref_isnum(val)) {
+      lj_needsplit(J);
+      val = emitir(IRTN(IR_CONV), val, (IRT_I64<<IRCONV_DSH)|IRT_NUM);
+      val = emitir(IRTI(IR_CONV), val, (IRT_INT<<IRCONV_DSH)|IRT_I64);
+    } else if (tref_typerange(val, IRT_I64, IRT_U64)) {
+      val = rec_cdata_conv(J, val, IRT_INT, tref_type(val), IRCONV_ANY);
+    } else {
+      return 0;  /* Strings, etc.: let the interpreter coerce/error. */
+    }
+    break;
+  case IRT_NUM:
+    if (tref_isnum(val)) {
+    } else if (tref_isinteger(val)) {
+      val = rec_cdata_conv(J, val, IRT_NUM, IRT_INT, IRCONV_ANY);
+    } else {
+      return 0;
+    }
+    break;
+  case IRT_FLOAT:
+    if (tref_isnum(val)) {
+      val = rec_cdata_conv(J, val, IRT_FLOAT, IRT_NUM, IRCONV_ANY);
+    } else if (tref_isinteger(val)) {
+      val = rec_cdata_conv(J, val, IRT_NUM, IRT_INT, IRCONV_ANY);
+      val = rec_cdata_conv(J, val, IRT_FLOAT, IRT_NUM, IRCONV_ANY);
+    } else {
+      return 0;
+    }
+    break;
+  default:
+    return 0;
+  }
+  if (irt == IRT_I64 || irt == IRT_U64) lj_needsplit(J);
+  emitir(IRT(IR_XSTORE, irt), dpr, val);
+  return 1;
+}
 #endif
 
 /* -- Sanity checks ------------------------------------------------------- */
@@ -978,7 +1145,8 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
     J->base -= cbase;
     frame = frame_prevd(frame);
   }
-  if (frame_islua(frame)) {  /* Return to Lua frame. */
+  if (frame_islua(frame) ||
+      (J->framedepth > 0 && frame_isc(frame) && isluafunc(frame_func(frame)))) {
     BCIns callins = *(frame_pc(frame)-1);
     ptrdiff_t nresults = bc_b(callins) ? (ptrdiff_t)bc_b(callins)-1 :gotresults;
     BCReg cbase = bc_a(callins);
@@ -1076,7 +1244,9 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
 		 "bad continuation type");
     }
   } else {
-    lj_trace_err(J, LJ_TRERR_NYIRETL);  /* NYI: handle return to C frame. */
+    /* NYI: handle return to C frame. */
+    lj_record_stop(J, LJ_TRLINK_RETURN, 0);
+    return;
   }
   lj_assertJ(J->baseslot >= 1+LJ_FR2, "bad baseslot for return");
 }
@@ -1565,6 +1735,14 @@ TRef lj_record_idx(jit_State *J, RecordIndex *ix)
   cTValue *oldv;
 
   while (!tref_istab(ix->tab)) { /* Handle non-table lookup. */
+if (LJ_HASFFI && tref_iscdata(ix->tab)) {
+      if (ix->val == 0) {
+	TRef tr = rec_cdata_field_get(J, ix);
+	if (tr) return tr;
+      } else if (rec_cdata_field_set(J, ix)) {
+	return 0;
+      }
+    }
     /* Never call raw lj_record_idx() on non-table. */
     lj_assertJ(ix->idxchain != 0, "bad usage");
     if (!lj_record_mm_lookup(J, ix, ix->val ? MM_newindex : MM_index))
@@ -2591,7 +2769,8 @@ void lj_record_ins(jit_State *J)
       break;
     }
 #endif
-    if (!(tref_isnumber_str(rb) && tref_isnumber_str(rc))) {
+    if (!((tref_isnumber_str(rb) || tref_typerange(rb, IRT_I64, IRT_U64)) &&
+      (tref_isnumber_str(rc) || tref_typerange(rc, IRT_I64, IRT_U64)))) {
       ix.tab = rb; ix.key = rc;
       copyTV(J->L, &ix.tabv, rbv);
       copyTV(J->L, &ix.keyv, rcv);
@@ -2631,7 +2810,19 @@ void lj_record_ins(jit_State *J)
       rc = xrc;  /* Shift amount may have been converted. */
     }
 #endif
-    if (!(tref_isnumber_str(rb) && tref_isnumber_str(rc))) {
+    if (tref_isinteger(rb) &&
+      (tref_isnumber_str(rc) || tref_typerange(rc, IRT_I64, IRT_U64))) {
+      TRef tsh;
+      tsh = lj_opt_narrow_tobit(J, rc);
+      IRType t = (tref_isinteger(tsh)) ? IRT_INT : tref_type(tsh);
+      if (!(op < IR_BROL ? LJ_TARGET_MASKSHIFT : LJ_TARGET_MASKROT) &&
+	  !tref_isk(tsh))
+	tsh = emitir(IRT(IR_BAND, t), tsh, lj_ir_kint(J, 63));
+      rc = emitir(IRTI((int)op - (int)BC_BSHL + (int)IR_BSHL), rb, tsh);
+      break;
+    }
+    if (!((tref_isnumber_str(rb) || tref_typerange(rb, IRT_I64, IRT_U64)) &&
+      tref_isnumber_str(rc))) {
       ix.tab = rb; ix.key = rc;
       copyTV(J->L, &ix.tabv, rbv);
       copyTV(J->L, &ix.keyv, rcv);
