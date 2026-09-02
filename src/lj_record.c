@@ -105,7 +105,7 @@ CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
   GCcdata *cd = cdataV(&ix->tabv);
   CType *ct = ctype_raw(cts, cd->ctypeid);
   CType *fct;
-  TRef base;
+  TRef base = 0;
 
   if (!tvisstr(&ix->keyv)) return NULL;
   while (ctype_isattrib(ct->info)) ct = ctype_child(cts, ct);
