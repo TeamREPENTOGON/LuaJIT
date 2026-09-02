@@ -55,6 +55,8 @@ static GCcdata *argv2cdata(jit_State *J, TRef tr, cTValue *o)
   TRef trtypeid;
   if (!tref_iscdata(tr))
     lj_trace_err(J, LJ_TRERR_BADTYPE);
+  if (!tviscdata(o))
+    lj_trace_err(J, LJ_TRERR_BADTYPE);
   cd = cdataV(o);
   /* Specialize to the CTypeID. */
   trtypeid = emitir(IRT(IR_FLOAD, IRT_U16), tr, IRFL_CDATA_CTYPEID);
@@ -1694,6 +1696,12 @@ static TRef crec_toint(jit_State *J, CTState *cts, TRef sp, TValue *sval)
 
 void LJ_FASTCALL recff_ffi_new(jit_State *J, RecordFFData *rd)
 {
+  crec_alloc(J, rd, argv2ctype(J, J->base[0], &rd->argv[0]));
+}
+
+void LJ_FASTCALL recff_ffi_cast(jit_State *J, RecordFFData *rd)
+{
+  CTState *cts = ctype_ctsG(J2G(J));
   crec_alloc(J, rd, argv2ctype(J, J->base[0], &rd->argv[0]));
 }
 
