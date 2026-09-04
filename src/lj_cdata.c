@@ -244,6 +244,11 @@ int lj_cdata_get(CTState *cts, CType *s, TValue *o, uint8_t *sp)
 {
   CTypeID sid;
 
+  if (LJ_UNLIKELY((uintptr_t)sp < 0x10000)) {
+    setnilV(o);
+    return 0;
+  }
+
   if (ctype_isconstval(s->info)) {
     cdata_getconst(cts, o, s);
     return 0;  /* No GC step needed. */
@@ -277,6 +282,8 @@ int lj_cdata_get(CTState *cts, CType *s, TValue *o, uint8_t *sp)
 /* Convert TValue and set C data value. */
 void lj_cdata_set(CTState *cts, CType *d, uint8_t *dp, TValue *o, CTInfo qual)
 {
+  if (LJ_UNLIKELY((uintptr_t)dp < 0x10000))
+    return;
   if (ctype_isconstval(d->info)) {
     goto err_const;
   } else if (ctype_isbitfield(d->info)) {

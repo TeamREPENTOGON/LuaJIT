@@ -705,8 +705,11 @@ LUA_API void lua_pushcdata(lua_State *L, lua_CTypeId ctypeid, const void *payloa
 {
 #if LJ_HASFFI
   GCcdata *cd = lj_cdata_new_(L, ctypeid, (MSize)size);
-  if (payload)
+  if (payload) {
     memcpy(cdataptr(cd), payload, size);
+  } else {
+    memset(cdataptr(cd), 0, size);
+  }
   setcdataV(L, L->top, cd);
   incr_top(L);
 #else

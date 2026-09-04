@@ -526,6 +526,8 @@ static void trace_stop(jit_State *J)
     *pc = BCINS_AD(BC_JLOOP, J->cur.snap[0].nslots, traceno);
     goto addroot;
   case BC_JMP:
+    if (J->exitno >= traceref(J, J->parent)->nsnap)
+      lj_trace_err(J, LJ_TRERR_GFAIL);
     /* Patch exit branch in parent to side trace entry. */
     lj_assertJ(J->parent != 0 && J->cur.root != 0, "not a side trace");
     lj_asm_patchexit(J, traceref(J, J->parent), J->exitno, J->cur.mcode);

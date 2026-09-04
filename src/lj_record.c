@@ -110,15 +110,19 @@ CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
   if (!tvisstr(&ix->keyv)) return NULL;
   while (ctype_isattrib(ct->info)) ct = ctype_child(cts, ct);
   if (ctype_isref(ct->info)) {
+    if (*(const void**)cdataptr(cd) == NULL) return NULL;
     base = emitir(IRT(IR_FLOAD, IRT_PTR), ix->tab, IRFL_CDATA_PTR);
     base = emitir(IRT(IR_XLOAD, IRT_PTR), base, 0);
+    emitir(IRTG(IR_NE, IRT_PTR), base, lj_ir_knull(J, IRT_PTR));
     ct = ctype_child(cts, ct);
     *fused = 0;
   } else if (ctype_isptr(ct->info)) {
     CType *cc = ctype_rawchild(cts, ct);
     if (!ctype_isstruct(cc->info)) return NULL;
+    if (*(const void**)cdataptr(cd) == NULL) return NULL;
     base = emitir(IRT(IR_FLOAD, IRT_PTR), ix->tab, IRFL_CDATA_PTR);
     base = emitir(IRT(IR_XLOAD, IRT_PTR), base, 0);
+    emitir(IRTG(IR_NE, IRT_PTR), base, lj_ir_knull(J, IRT_PTR));
     ct = cc;
     *fused = 0;
   } else if (ctype_isstruct(ct->info)) {
@@ -1206,7 +1210,7 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
       /* Return to lower frame would leave the loop in a root trace. */
       lj_trace_err(J, LJ_TRERR_LLEAVE);
     } else if (J->needsnap) {  /* Tailcalled to ff with side-effects. */
-      lj_trace_err(J, LJ_TRERR_NYIRETL);  /* No way to insert snapshot here. */
+      lj_trace_err(J, LJ_TRERR_NYIRETL);
     } else if (1 + pt->framesize >= LJ_MAX_JSLOTS ||
 	       J->baseslot + J->maxslot >= LJ_MAX_JSLOTS) {
       lj_trace_err(J, LJ_TRERR_STACKOV);
@@ -1225,8 +1229,17 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
   } else if (frame_iscont(frame)) {  /* Return to continuation frame. */
     ASMFunction cont = frame_contf(frame);
     BCReg cbase = (BCReg)frame_delta(frame);
-    if ((J->framedepth -= 2) < 0)
-      lj_trace_err(J, LJ_TRERR_NYIRETL);
+    {
+      int32_t had = (int32_t)J->framedepth;
+      if (had < 2) {
+	BCReg cop = bc_op(*(frame_contpc(frame)-1));
+	if (cop >= BC_TSETV && cop <= BC_TSETR)
+	  goto ret_done;
+	lj_trace_err(J, LJ_TRERR_NYIRETL);
+      } else {
+	J->framedepth = (BCReg)(had - 2);
+      }
+    }
     J->baseslot -= (BCReg)cbase;
     J->base -= cbase;
     J->maxslot = cbase-(2<<LJ_FR2);
@@ -1279,6 +1292,7 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
     lj_record_stop(J, LJ_TRLINK_RETURN, 0);
     return;
   }
+  ret_done:
   lj_assertJ(J->baseslot >= 1+LJ_FR2, "bad baseslot for return");
 }
 
@@ -1769,7 +1783,7 @@ TRef lj_record_idx(jit_State *J, RecordIndex *ix)
   cTValue *oldv;
 
   while (!tref_istab(ix->tab)) { /* Handle non-table lookup. */
-if (LJ_HASFFI && tref_iscdata(ix->tab)) {
+    if (LJ_HASFFI && tref_iscdata(ix->tab)) {
       if (ix->val == 0) {
 	TRef tr = rec_cdata_field_get(J, ix, 0);
 	if (tr) return tr;
@@ -2862,13 +2876,13 @@ void lj_record_ins(jit_State *J)
 	int32_t k = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
 	safe = k >= 0 && k <= 31 && (tvisint(rcv) || numV(rcv) == (double)k);
       }
-      if (!safe)
-	lj_trace_err(J, LJ_TRERR_NYIBC);
       if (tref_isinteger(rb)) {
 	TRef tsh = lj_opt_narrow_tobit(J, rc);
 	rc = emitir(IRTI((int)op - (int)BC_BSHL + (int)IR_BSHL), rb, tsh);
 	break;
       }
+      if (!safe)
+	lj_trace_err(J, LJ_TRERR_NYIBC);
       lj_trace_err(J, LJ_TRERR_NYIBC);
     }
     break;

@@ -110,7 +110,15 @@ static void *err_unwind(lua_State *L, void *stopcf, int errcode)
 {
   TValue *frame = L->base-1;
   void *cf = L->cframe;
+  ptrdiff_t it = 0;
+  uintptr_t stackMin = (uintptr_t)tvref(L->stack);
+  uintptr_t stackMax = stackMin + (uintptr_t)L->stacksize * (uintptr_t)sizeof(TValue);
   while (cf) {
+    if (LJ_UNLIKELY(++it > 4096))
+      break;
+
+    if (LJ_UNLIKELY((uintptr_t)frame < stackMin || (uintptr_t)frame >= stackMax))
+      break;
     int32_t nres = cframe_nres(cframe_raw(cf));
     if (nres < 0) {  /* C frame without Lua frame? */
       TValue *top = restorestack(L, -nres);
