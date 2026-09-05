@@ -136,6 +136,23 @@ static TValue *mmcall(lua_State *L, ASMFunction cont, cTValue *mo,
 
 /* -- C helpers for some instructions, called from assembler VM ----------- */
 
+#if LJ_HASFFI
+static int cdata_meta_func(lua_State *L, cTValue *o, cTValue *k, cTValue **pmo,
+			   MMS mm)
+{
+  CTState *cts = ctype_cts(L);
+  uint8_t *p;
+  CTInfo qual = 0;
+  cTValue *mo;
+  if (!tvisstr(k)) return 0;
+  lj_cdata_index(cts, cdataV(o), k, &p, &qual, 1);
+  if (!(qual & 1)) return 0;
+  mo = lj_ctype_meta(cts, cdataV(o)->ctypeid, mm);
+  if (mo && tvisfunc(mo)) { *pmo = mo; return 1; }
+  return 0;
+}
+#endif
+
 /* Helper for TGET*. __index chain and metamethod. */
 cTValue *lj_meta_tget(lua_State *L, cTValue *o, cTValue *k)
 {
@@ -148,6 +165,18 @@ cTValue *lj_meta_tget(lua_State *L, cTValue *o, cTValue *k)
       if (!tvisnil(tv) ||
 	  !(mo = lj_meta_fast(L, tabref(t->metatable), MM_index)))
 	return tv;
+#if LJ_HASFFI
+    } else if (tviscdata(o)) {
+      cTValue *rmo;
+      if (cdata_meta_func(L, o, k, &rmo, MM_index)) {
+	L->top = mmcall(L, lj_cont_ra, rmo, o, k);
+	return NULL;
+      }
+      if (tvisnil(mo = lj_meta_lookup(L, o, MM_index))) {
+	lj_err_optype(L, o, LJ_ERR_OPINDEX);
+	return NULL;
+      }
+#endif
     } else if (tvisnil(mo = lj_meta_lookup(L, o, MM_index))) {
       lj_err_optype(L, o, LJ_ERR_OPINDEX);
       return NULL;  /* unreachable */
@@ -186,6 +215,18 @@ TValue *lj_meta_tset(lua_State *L, cTValue *o, cTValue *k)
 	else if (tvisnum(k) && tvisnan(k)) lj_err_msg(L, LJ_ERR_NANIDX);
 	return lj_tab_newkey(L, t, k);
       }
+#if LJ_HASFFI
+    } else if (tviscdata(o)) {
+      cTValue *rmo;
+      if (cdata_meta_func(L, o, k, &rmo, MM_newindex)) {
+	L->top = mmcall(L, lj_cont_nop, rmo, o, k);
+	return NULL;
+      }
+      if (tvisnil(mo = lj_meta_lookup(L, o, MM_newindex))) {
+	lj_err_optype(L, o, LJ_ERR_OPINDEX);
+	return NULL;
+      }
+#endif
     } else if (tvisnil(mo = lj_meta_lookup(L, o, MM_newindex))) {
       lj_err_optype(L, o, LJ_ERR_OPINDEX);
       return NULL;  /* unreachable */

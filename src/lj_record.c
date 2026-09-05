@@ -112,7 +112,6 @@ CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
   if (ctype_isref(ct->info)) {
     if (*(const void**)cdataptr(cd) == NULL) return NULL;
     base = emitir(IRT(IR_FLOAD, IRT_PTR), ix->tab, IRFL_CDATA_PTR);
-    base = emitir(IRT(IR_XLOAD, IRT_PTR), base, 0);
     emitir(IRTG(IR_NE, IRT_PTR), base, lj_ir_knull(J, IRT_PTR));
     ct = ctype_child(cts, ct);
     *fused = 0;
@@ -121,7 +120,6 @@ CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
     if (!ctype_isstruct(cc->info)) return NULL;
     if (*(const void**)cdataptr(cd) == NULL) return NULL;
     base = emitir(IRT(IR_FLOAD, IRT_PTR), ix->tab, IRFL_CDATA_PTR);
-    base = emitir(IRT(IR_XLOAD, IRT_PTR), base, 0);
     emitir(IRTG(IR_NE, IRT_PTR), base, lj_ir_knull(J, IRT_PTR));
     ct = cc;
     *fused = 0;
@@ -161,11 +159,13 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
 		 lj_ir_kintp(J, (ptrdiff_t)sizeof(GCcdata) + ofs));
   else
     dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
+  if (irt == IRT_INT && ctype_isnum(fct->info) && !(fct->info & CTF_FP) &&
+      (fct->info & CTF_UNSIGNED)) {
+    tr = emitir(IRT(IR_XLOAD, IRT_INT), dpr, 0);
+    return rec_cdata_conv(J, tr, IRT_NUM, IRT_U32, 0);
+  }
   if (irt == IRT_I64 || irt == IRT_U64) lj_needsplit(J);
   tr = emitir(IRT(IR_XLOAD, irt), dpr, 0);
-  if (irt == IRT_INT && ctype_isnum(fct->info) && !(fct->info & CTF_FP) &&
-      (fct->info & CTF_UNSIGNED))
-    J->u32ref = tref_ref(tr);
   if (irt == IRT_FLOAT)
     tr = rec_cdata_conv(J, tr, IRT_NUM, IRT_FLOAT, IRCONV_ANY);
   return tr;
@@ -217,9 +217,13 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   case IRT_INT:
     if (tref_isinteger(val)) {
     } else if (tref_isnum(val)) {
-      lj_needsplit(J);
-      val = emitir(IRTN(IR_CONV), val, (IRT_I64<<IRCONV_DSH)|IRT_NUM);
-      val = emitir(IRTI(IR_CONV), val, (IRT_INT<<IRCONV_DSH)|IRT_I64);
+      if ((fct->info & CTF_UNSIGNED)) {
+	val = lj_opt_narrow_tobit(J, val);
+      } else {
+	lj_needsplit(J);
+	val = emitir(IRTN(IR_CONV), val, (IRT_I64<<IRCONV_DSH)|IRT_NUM);
+	val = emitir(IRTI(IR_CONV), val, (IRT_INT<<IRCONV_DSH)|IRT_I64);
+      }
     } else if (tref_typerange(val, IRT_I64, IRT_U64)) {
       val = rec_cdata_conv(J, val, IRT_INT, tref_type(val), IRCONV_ANY);
     } else {
@@ -1786,8 +1790,12 @@ TRef lj_record_idx(jit_State *J, RecordIndex *ix)
     if (LJ_HASFFI && tref_iscdata(ix->tab)) {
       if (ix->val == 0) {
 	TRef tr = rec_cdata_field_get(J, ix, 0);
-	if (tr) return tr;
+	if (tr) {
+	  if (J->postproc == LJ_POST_NONE) J->postproc = LJ_POST_FFRETRY;
+	  return tr;
+	}
       } else if (rec_cdata_field_set(J, ix, 0)) {
+	if (J->postproc == LJ_POST_NONE) J->postproc = LJ_POST_FFRETRY;
 	return 0;
       }
     }
@@ -2526,7 +2534,8 @@ void lj_record_ins(jit_State *J)
       }
       break;
     case LJ_POST_FFRETRY:  /* Suppress recording of retried fast function. */
-      if (bc_op(*J->pc) >= BC__MAX)
+      if (bc_op(*J->pc) >= BC__MAX ||
+	  bc_op(*J->pc) == BC_FUNCC || bc_op(*J->pc) == BC_FUNCCW)
 	return;
       break;
     default: lj_assertJ(0, "bad post-processing mode"); break;
@@ -2877,8 +2886,13 @@ void lj_record_ins(jit_State *J)
 	safe = k >= 0 && k <= 31 && (tvisint(rcv) || numV(rcv) == (double)k);
       }
       if (tref_isinteger(rb)) {
+	if (!safe)
+	  lj_trace_err(J, LJ_TRERR_NYIBC);
 	TRef tsh = lj_opt_narrow_tobit(J, rc);
 	rc = emitir(IRTI((int)op - (int)BC_BSHL + (int)IR_BSHL), rb, tsh);
+	if (op == BC_BSHL) {
+	  rc = emitir(IRT(IR_CONV, IRT_NUM), rc, (IRT_U32 << IRCONV_DSH) | IRT_U32);
+	}
 	break;
       }
       if (!safe)
