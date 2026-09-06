@@ -59,7 +59,7 @@ static TValue *index2adr(lua_State *L, int idx)
       settabV(L, o, tabref(fn->c.env));
       return o;
     } else {
-      idx = LUA_GLOBALSINDEX - idx;
+      idx = LUA_REGISTRYINDEX - idx;
       return idx <= fn->c.nupvalues ? &fn->c.upvalue[idx-1] : niltv(L);
     }
   }
@@ -198,7 +198,7 @@ static void copy_slot(lua_State *L, TValue *f, int idx)
   } else {
     TValue *o = index2adr_check(L, idx);
     copyTV(L, o, f);
-    if (idx < LUA_GLOBALSINDEX)  /* Need a barrier for upvalues. */
+    if (idx < LUA_REGISTRYINDEX)  /* Need a barrier for upvalues. */
       lj_gc_barrier(L, curr_func(L), f);
   }
 }

@@ -14,3 +14,5 @@ Please point your favorite browser to:
 
  doc/luajit.html
 
+# Note
+This fork is **specifically** for REPENTOGON, and by extension, The Binding of Isaac: Repentance+. It is **not** Lua 5.1 ABI compliant and this is an explicit non-goal. This fork will not work properly outside of this environment.

@@ -33,10 +33,10 @@
 /*
 ** pseudo-indices
 */
-#define LUA_REGISTRYINDEX	(-10000)
-#define LUA_ENVIRONINDEX	(-10001)
-#define LUA_GLOBALSINDEX	(-10002)
-#define lua_upvalueindex(i)	(LUA_GLOBALSINDEX-(i))
+#define LUA_REGISTRYINDEX	(-1001000)
+#define LUA_ENVIRONINDEX	(-1002000)
+#define LUA_GLOBALSINDEX	(-1002001)
+#define lua_upvalueindex(i)	(LUA_REGISTRYINDEX-(i))
 
 
 /* thread status */
