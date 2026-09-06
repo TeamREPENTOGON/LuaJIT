@@ -1544,6 +1544,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  cmp RA, -2
   |  je >3
   |.endif
+  |  cmp RB, LJ_TCDATA;  je ->fff_fallback
   |  mov RC, ~LJ_TNUMX
   |  not RB
   |  cmp RC, RB

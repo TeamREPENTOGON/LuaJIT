@@ -68,8 +68,23 @@ LJLIB_PUSH("cdata")
 LJLIB_PUSH("table")
 LJLIB_PUSH(top-9)  /* userdata */
 LJLIB_PUSH("number")
-LJLIB_ASM_(type)		LJLIB_REC(.)
-/* Recycle the lj_lib_checkany(L, 1) from assert. */
+LJLIB_ASM(type)			LJLIB_REC(.)
+{
+  TValue *o = lj_lib_checkany(L, 1);
+#if LJ_HASFFI
+  if (tviscdata(o)) {
+    CTState *cts = ctype_ctsG(G(L));
+    cTValue *mo = cts ?
+      lj_tab_getinth(cts->miscmap, -(int32_t)cdataV(o)->ctypeid) : NULL;
+    setstrV(L, L->base-1-LJ_FR2,
+	    (mo && tvistab(mo)) ? lj_str_newlit(L, "userdata")
+				: lj_str_newlit(L, "cdata"));
+    return FFH_RES(1);
+  }
+#endif
+  setstrV(L, L->base-1-LJ_FR2, lj_str_newz(L, lj_typename(o)));
+  return FFH_RES(1);
+}
 
 /* -- Base library: iterators --------------------------------------------- */
 
