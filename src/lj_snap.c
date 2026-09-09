@@ -586,7 +586,8 @@ void lj_snap_replay(jit_State *J, GCtrace *T)
 	      if (snap_pref(J, T, map, nent, seen, irs->op2) == 0)
 		snap_pref(J, T, map, nent, seen, T->ir[irs->op2].op1);
 	      else if ((LJ_SOFTFP32 || (LJ_32 && LJ_HASFFI)) &&
-		       irs+1 < irlast && (irs+1)->o == IR_HIOP)
+		       irs+1 < irlast && (irs+1)->o == IR_HIOP &&
+		       (irs+1)->op1 == irs->op1)
 		snap_pref(J, T, map, nent, seen, (irs+1)->op2);
 	    }
 	}
@@ -666,7 +667,8 @@ void lj_snap_replay(jit_State *J, GCtrace *T)
 		val = snap_pref(J, T, map, nent, seen, irc->op1);
 		val = emitir(IRTN(IR_CONV), val, IRCONV_NUM_INT);
 	      } else if ((LJ_SOFTFP32 || (LJ_32 && LJ_HASFFI)) &&
-			 irs+1 < irlast && (irs+1)->o == IR_HIOP) {
+			 irs+1 < irlast && (irs+1)->o == IR_HIOP &&
+			 (irs+1)->op1 == irs->op1) {
 		IRType t = IRT_I64;
 		if (LJ_SOFTFP32 && irt_type((irs+1)->t) == IRT_SOFTFP)
 		  t = IRT_NUM;
@@ -887,7 +889,8 @@ static void snap_unsink(jit_State *J, GCtrace *T, ExitState *ex,
 	  lj_assertJ(p >= (uint8_t *)cdataptr(cd) &&
 		     p + szs <= (uint8_t *)cdataptr(cd) + sz,
 		     "sunk store with offset out of range");
-	  if (LJ_32 && irs+1 < T->ir + T->nins && (irs+1)->o == IR_HIOP) {
+	  if (LJ_32 && irs+1 < T->ir + T->nins && (irs+1)->o == IR_HIOP &&
+	      (irs+1)->op1 == irs->op1) {
 	    lj_assertJ(szs == 4, "sunk store with bad size %d", szs);
 	    snap_restoredata(J, T, ex, snapno, rfilt, (irs+1)->op2,
 			     LJ_LE ? p+4 : p, 4);

@@ -62,20 +62,25 @@ static TRef rec_bitop_tou32(jit_State *J, TRef tr, cTValue *tv)
 {
   if (tref_isinteger(tr))
     return tr;
-  if (tv && !tvisnan(tv)) {
-    lua_Number v = tv->n;
+  if (tv && tvisnum(tv)) {
+    lua_Number v = numV(tv);
     if (v >= -2147483648.0 && v < 4294967296.0 &&
-	v == (lua_Number)(int64_t)v) {
+	v == (lua_Number)(int64_t)v)
       return lj_opt_narrow_tobit(J, tr);
-    }
-    if (!tref_isnum(tr))
-      lj_trace_err(J, LJ_TRERR_NYIBC);
+  }
+  if (tref_isnum(tr)) {
     emitir(IRTG(IR_GE, IRT_NUM), tr, lj_ir_knum(J, -2147483648.0));
     emitir(IRTG(IR_LT, IRT_NUM), tr, lj_ir_knum(J, 4294967296.0));
     return lj_opt_narrow_tobit(J, tr);
   }
   lj_trace_err(J, LJ_TRERR_NYIBC);
   return 0;
+}
+
+static void rec_cdata_ctype_guard(jit_State *J, TRef tr, GCcdata *cd)
+{
+  TRef trid = emitir(IRT(IR_FLOAD, IRT_U16), tr, IRFL_CDATA_CTYPEID);
+  emitir(IRTG(IR_EQ, IRT_INT), trid, lj_ir_kint(J, (int32_t)cd->ctypeid));
 }
 
 /* Map a scalar member ctype to an IR type (-1 if not recordable here). */
@@ -108,6 +113,7 @@ CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
   TRef base = 0;
 
   if (!tvisstr(&ix->keyv)) return NULL;
+  rec_cdata_ctype_guard(J, ix->tab, cd);
   while (ctype_isattrib(ct->info)) ct = ctype_child(cts, ct);
   if (ctype_isref(ct->info)) {
     if (*(const void**)cdataptr(cd) == NULL) return NULL;
@@ -153,12 +159,18 @@ TRef rec_cdata_field_get(jit_State *J, RecordIndex *ix, int allowprivate)
 fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   if (!fct) return 0;
   irt = rec_cdata_field_irt(cts, fct);
-  if (irt < 0) return 0;
+  if (irt < 0 && !(fct->info & CTF_BOOL)) return 0;
   if (fused)
     dpr = emitir(IRT(IR_ADD, IRT_PTR), ix->tab,
 		 lj_ir_kintp(J, (ptrdiff_t)sizeof(GCcdata) + ofs));
   else
     dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
+  if ((fct->info & CTF_BOOL)) {
+    tr = emitir(IRT(IR_XLOAD, IRT_U8), dpr, 0);
+    lj_ir_set(J, IRTGI(IR_NE), tr, lj_ir_kint(J, 0));
+    J->postproc = LJ_POST_FIXGUARD;
+    return TREF_TRUE;
+  }
   if (irt == IRT_INT && ctype_isnum(fct->info) && !(fct->info & CTF_FP) &&
       (fct->info & CTF_UNSIGNED)) {
     tr = emitir(IRT(IR_XLOAD, IRT_INT), dpr, 0);
@@ -188,12 +200,20 @@ int rec_cdata_field_set(jit_State *J, RecordIndex *ix, int allowprivate)
 fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   if (!fct) return 0;
   irt = rec_cdata_field_irt(cts, fct);
-  if (irt < 0) return 0;
+  if (irt < 0 && !(fct->info & CTF_BOOL)) return 0;
   if (fused)
     dpr = emitir(IRT(IR_ADD, IRT_PTR), ix->tab,
 		 lj_ir_kintp(J, (ptrdiff_t)sizeof(GCcdata) + ofs));
   else
     dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
+  if ((fct->info & CTF_BOOL)) {
+    if (tref_isk(val) && tref_isbool(val)) {
+      emitir(IRT(IR_XSTORE, IRT_U8), dpr,
+	     lj_ir_kint(J, tref_istrue(val) ? 1 : 0));
+      return 1;
+    }
+    return 0;
+  }
   switch (irt) {
   case IRT_PTR:
     if (tref_isstr(val)) {
@@ -1364,11 +1384,18 @@ int lj_record_mm_lookup(jit_State *J, RecordIndex *ix, MMS mm)
     if (LJ_HASFFI && tref_iscdata(ix->tab)) {
       CTState *cts = ctype_cts(J->L);
       GCcdata *cd = cdataV(&ix->tabv);
-      cTValue *mo = lj_ctype_meta(cts, cd->ctypeid, mm);
+      cTValue *mo;
+      rec_cdata_ctype_guard(J, ix->tab, cd);
+      if ((mm == MM_index || mm == MM_newindex) && tref_isstr(ix->key)) {
+	uint8_t *p; CTInfo qual = 0;
+	lj_cdata_index(cts, cd, &ix->keyv, &p, &qual, 1);
+	if (!(qual & 1)) { ix->mt = TREF_NIL; return 0; }
+      }
+      mo = lj_ctype_meta(cts, cd->ctypeid, mm);
       if (mo != NULL) {
-	if (tvisfunc(mo)) {
+	if (tvisfunc(mo) || tvistab(mo)) {
 	  ix->mobjv = *mo;
-	  ix->mobj = lj_ir_kgc(J, gcV(mo), IRT_FUNC);
+	  ix->mobj = lj_ir_kgc(J, gcV(mo), tvisfunc(mo) ? IRT_FUNC : IRT_TAB);
 	  ix->mt = TREF_NIL;
 	  return 1;  /* Got metamethod. */
 	}
@@ -1838,6 +1865,8 @@ TRef lj_record_idx(jit_State *J, RecordIndex *ix)
     }
 #endif
     /* Otherwise retry lookup with metaobject. */
+    if (LJ_HASFFI && tref_iscdata(ix->tab) && J->postproc == LJ_POST_NONE)
+      J->postproc = LJ_POST_FFRETRY;
     ix->tab = ix->mobj;
     copyTV(J->L, &ix->tabv, &ix->mobjv);
     if (--ix->idxchain == 0)
@@ -2567,7 +2596,8 @@ void lj_record_ins(jit_State *J)
   /* Record only closed loops for root traces. */
   pc = J->pc;
   if (J->framedepth == 0 &&
-     (MSize)((char *)pc - (char *)J->bc_min) >= J->bc_extent)
+     (MSize)((char *)pc - (char *)J->bc_min) >= J->bc_extent &&
+     bc_op(*pc) != BC_FUNCC && bc_op(*pc) != BC_FUNCCW)
     lj_trace_err(J, LJ_TRERR_LLEAVE);
 
 #ifdef LUA_USE_ASSERT
@@ -2853,6 +2883,11 @@ void lj_record_ins(jit_State *J)
       rc = emitir(IRTI((int)op - (int)BC_BAND + (int)IR_BAND), rbn, rcn);
       rc = emitir(IRT(IR_CONV, IRT_NUM), rc,
 		  (IRT_U32 << IRCONV_DSH) | IRT_U32);
+      if (op == BC_BAND && rcv && (tvisint(rcv) || tvisnum(rcv))) {
+	int32_t m = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
+	if (m >= 0 && m <= 31 && (tvisint(rcv) || numV(rcv) == (double)m))
+	  J->cnt31ref = tref_ref(rc);
+      }
       break;
     }
     if (tref_isinteger(rb) && op == BC_BAND && rcv && tref_isk(rc) &&

@@ -1672,7 +1672,7 @@ static uint32_t recdef_lookup(GCfunc *fn)
 /* Record entry to a fast function or C function. */
 void lj_ffrecord_func(jit_State *J)
 {
-  if (J->framedepth &&
+  if ((J->framedepth || J->fn->c.ffid == FF_ffi_meta___index) &&
       (J->fn->c.ffid == FF_ffi_meta___index ||
        J->fn->c.ffid == FF_ffi_meta___newindex) &&
       tref_iscdata(J->base[0]) && tvisstr(&J->L->base[1])) {
@@ -1690,6 +1690,22 @@ void lj_ffrecord_func(jit_State *J)
       CType *fct = rec_cdata_field_resolve(J, &ix, &base, &ofs, &fused, 0);
       if (fct && rec_cdata_field_irt(ctype_cts(J->L), fct) >= 0) {
 	/* Direct scalar field: intercepted below. */
+      } else if (!isnew) {
+	CTState *cts = ctype_cts(J->L);
+	cTValue *mo = lj_ctype_meta(cts, cdataV(&ix.tabv)->ctypeid, MM_index);
+	cTValue *v;
+	TRef tr;
+	if (mo && tvistab(mo) &&
+	    !tvisnil((v = lj_tab_get(J->L, tabV(mo), &ix.keyv))) &&
+	    (tr = lj_record_constify(J, v)) != 0) {
+	  emitir(IRTG(IR_EQ, IRT_INT),
+		 emitir(IRT(IR_FLOAD, IRT_U16), J->base[0], IRFL_CDATA_CTYPEID),
+		 lj_ir_kint(J, (int32_t)cdataV(&ix.tabv)->ctypeid));
+	  J->base[0] = tr;
+	  if (J->postproc == LJ_POST_NONE) J->postproc = LJ_POST_FFRETRY;
+	  return;
+	}
+	goto stock;
       } else {
 	goto stock;  /* Metatype/non-field lookup: stock handler. */
       }

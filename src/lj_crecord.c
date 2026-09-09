@@ -840,7 +840,7 @@ void LJ_FASTCALL recff_cdata_index(jit_State *J, RecordFFData *rd)
 again:
   idx = J->base[1];
   if (tvisstr(&rd->argv[1]) && !tref_isstr(idx))
-    idx = lj_ir_kstr(J, strV(&rd->argv[1]));
+    idx = J->base[1] = lj_ir_kstr(J, strV(&rd->argv[1]));
   if (tref_isnumber(idx)) {
     idx = lj_opt_narrow_cindex(J, idx);
     if (ctype_ispointer(ct->info)) {
@@ -2042,6 +2042,17 @@ TRef recff_bit64_bitop(jit_State *J, TRef rb, TRef rc,
   tr = crec_bit64_arg(J, ct, rb, rbv);
   tr2 = rcv ? crec_bit64_arg(J, ct, rc, rcv) : 0;
   tr = emitir(IRT(op, id-CTID_INT64+IRT_I64), tr, tr2);
+  if (op == IR_BAND) {
+    cTValue *mv = (rcv && (tvisint(rcv) || tvisnum(rcv))) ? rcv :
+		  ((rbv && (tvisint(rbv) || tvisnum(rbv))) ? rbv : NULL);
+    if (mv) {
+      lua_Number m = tvisint(mv) ? (lua_Number)intV(mv) : numV(mv);
+      if (m >= 0.0 && m <= 4294967295.0) {
+	tr = emitconv(tr, IRT_INT, IRT_I64, 0);
+	return emitconv(tr, IRT_NUM, IRT_U32, 0);
+      }
+    }
+  }
   return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, id), tr);
 }
 
