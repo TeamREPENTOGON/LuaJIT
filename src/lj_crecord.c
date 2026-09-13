@@ -1543,7 +1543,12 @@ void LJ_FASTCALL recff_cdata_arith(jit_State *J, RecordFFData *rd)
   for (i = 0; i < 2; i++) {
     TRef tr = J->base[i];
     CType *ct = ctype_get(cts, CTID_DOUBLE);
-    if (!tr) {
+    if (tref_isnil(tr)) {
+      if (!(mm == MM_len || mm == MM_eq || mm == MM_lt || mm == MM_le))
+	lj_trace_err(J, LJ_TRERR_BADTYPE);
+      tr = lj_ir_kptr(J, NULL);
+      ct = ctype_get(cts, CTID_P_VOID);
+    } else if (!tr) {
       lj_trace_err(J, LJ_TRERR_BADTYPE);
     } else if (tref_iscdata(tr)) {
       CTypeID id = argv2cdata(J, tr, &rd->argv[i])->ctypeid;
@@ -1585,11 +1590,6 @@ void LJ_FASTCALL recff_cdata_arith(jit_State *J, RecordFFData *rd)
 	  tr = emitir(IRT(IR_XLOAD, t), tr, 0);
 	}
       }
-    } else if (tref_isnil(tr)) {
-      if (!(mm == MM_len || mm == MM_eq || mm == MM_lt || mm == MM_le))
-	lj_trace_err(J, LJ_TRERR_BADTYPE);
-      tr = lj_ir_kptr(J, NULL);
-      ct = ctype_get(cts, CTID_P_VOID);
     } else if (tref_isinteger(tr)) {
       ct = ctype_get(cts, CTID_INT32);
     } else if (tref_isstr(tr)) {

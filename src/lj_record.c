@@ -158,13 +158,18 @@ TRef rec_cdata_field_get(jit_State *J, RecordIndex *ix, int allowprivate)
   int fused;
 fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   if (!fct) return 0;
-  irt = rec_cdata_field_irt(cts, fct);
-  if (irt < 0 && !(fct->info & CTF_BOOL)) return 0;
   if (fused)
     dpr = emitir(IRT(IR_ADD, IRT_PTR), ix->tab,
 		 lj_ir_kintp(J, (ptrdiff_t)sizeof(GCcdata) + ofs));
   else
     dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
+  if (ctype_isstruct(fct->info) || ctype_isrefarray(fct->info)) {
+    CTypeID refid = lj_ctype_intern(cts, CTINFO_REF(ctype_typeid(cts, fct)),
+				     CTSIZE_PTR);
+    return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, refid), dpr);
+  }
+  irt = rec_cdata_field_irt(cts, fct);
+  if (irt < 0 && !(fct->info & CTF_BOOL)) return 0;
   if ((fct->info & CTF_BOOL)) {
     tr = emitir(IRT(IR_XLOAD, IRT_U8), dpr, 0);
     lj_ir_set(J, IRTGI(IR_NE), tr, lj_ir_kint(J, 0));
@@ -181,6 +186,10 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
     tr = emitir(IRT(IR_XLOAD, irt), dpr, 0);
     return emitir(IRTG(IR_CNEWI, IRT_CDATA),
 		  lj_ir_kint(J, irt == IRT_U64 ? CTID_UINT64 : CTID_INT64), tr);
+  }
+  if (irt == IRT_PTR) {
+    tr = emitir(IRT(IR_XLOAD, IRT_PTR), dpr, 0);
+    return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, ctype_typeid(cts, fct)), tr);
   }
   tr = emitir(IRT(IR_XLOAD, irt), dpr, 0);
   if (irt == IRT_FLOAT)
@@ -2556,6 +2565,11 @@ void lj_record_ins(jit_State *J)
 	    J->base[s] = TREF_FALSE;
 	    break;
 	  }
+      }
+      if (bc_op(*J->pc) >= BC__MAX ||
+	  bc_op(*J->pc) == BC_FUNCC || bc_op(*J->pc) == BC_FUNCCW) {
+	J->postproc = LJ_POST_FFRETRY;
+	return;
       }
       break;
     case LJ_POST_FIXCONST:
