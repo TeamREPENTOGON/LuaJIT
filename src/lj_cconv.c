@@ -407,6 +407,10 @@ int lj_cconv_tv_ct(CTState *cts, CType *s, CTypeID sid,
     /* Create reference. */
     setcdataV(cts->L, o, lj_cdata_newref(cts, sp, sid));
     return 1;  /* Need GC step. */
+  } else if (ctype_isptr(sinfo) && *(void **)sp == NULL) {
+    // RGON: Luabridge userdata for nullptrs is nil, we need to mimic that.
+    setnilV(o);
+    return 0;
   } else {
     GCcdata *cd;
     CTSize sz;
