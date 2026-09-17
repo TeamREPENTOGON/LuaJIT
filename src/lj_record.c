@@ -192,6 +192,16 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   }
   if (irt == IRT_PTR) {
     tr = emitir(IRT(IR_XLOAD, IRT_PTR), dpr, 0);
+    if (ctype_isptr(fct->info)) {
+      GCcdata *cd = cdataV(&ix->tabv);
+      uint8_t *fp = (fused ? (uint8_t *)cdataptr(cd)
+			   : *(uint8_t **)cdataptr(cd)) + ofs;
+      if (*(void **)fp == NULL) {
+	emitir(IRTG(IR_EQ, IRT_PTR), tr, lj_ir_knull(J, IRT_PTR));
+	return TREF_NIL;
+      }
+      emitir(IRTG(IR_NE, IRT_PTR), tr, lj_ir_knull(J, IRT_PTR));
+    }
     return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, ctype_typeid(cts, fct)), tr);
   }
   tr = emitir(IRT(IR_XLOAD, irt), dpr, 0);
@@ -355,6 +365,7 @@ static void rec_check_slots(jit_State *J)
 {
   BCReg s, nslots = J->baseslot + J->maxslot;
   int32_t depth = 0;
+  int fnwindow;
   cTValue *base = J->L->base - J->baseslot;
   lj_assertJ(J->baseslot >= 1+LJ_FR2, "bad baseslot");
   lj_assertJ(J->baseslot == 1+LJ_FR2 || (J->slot[J->baseslot-1] & TREF_FRAME),
@@ -390,7 +401,11 @@ static void rec_check_slots(jit_State *J)
 #endif
 	lj_assertJ(tref_isfunc(tr),
 		   "frame slot %d is not a function", s-LJ_FR2);
-	lj_assertJ(!tref_isk(tr) || fn == ir_kfunc(ir),
+	fnwindow = LJ_HASFFI && isffunc(fn) &&
+		   fn->c.ffid >= FF_ffi_meta___index &&
+		   fn->c.ffid <= FF_ffi_meta___ipairs &&
+		   tref_isk(tr) && isluafunc(ir_kfunc(ir));
+	lj_assertJ(!tref_isk(tr) || fn == ir_kfunc(ir) || fnwindow,
 		   "frame slot %d function mismatch", s-LJ_FR2);
 	lj_assertJ(s > delta + LJ_FR2 ? (J->slot[s-delta] & TREF_FRAME)
 				      : (s == delta + LJ_FR2),

@@ -1808,10 +1808,18 @@ void LJ_FASTCALL recff_ffi_istype(jit_State *J, RecordFFData *rd)
     }
   }
   {
-    TRef oid = emitir(IRT(IR_FLOAD, IRT_U16), J->base[1], IRFL_CDATA_CTYPEID);
+    if (tref_iscdata(J->base[1]) && tviscdata(&rd->argv[1])) {
+      TRef oid = emitir(IRT(IR_FLOAD, IRT_U16), J->base[1], IRFL_CDATA_CTYPEID);
+      emitir(IRTG(IR_EQ, IRT_INT), oid,
+	     lj_ir_kint(J, (int32_t)cdataV(&rd->argv[1])->ctypeid));
+    } else {
+      setfuncV(J->L, &J->errinfo, J->fn);
+      lj_trace_err_info(J, LJ_TRERR_NYIFFU);
+    }
     J->postproc = LJ_POST_FIXBOOL;
-    J->base[0] = emitir(IRTG(IR_EQ, IRT_INT), oid, lj_ir_kint(J, (int32_t)ctid));
+    J->base[0] = TREF_TRUE;
   }
+  UNUSED(ctid);
 }
 
 void LJ_FASTCALL recff_ffi_getprivate(jit_State *J, RecordFFData *rd)
@@ -2042,17 +2050,6 @@ TRef recff_bit64_bitop(jit_State *J, TRef rb, TRef rc,
   tr = crec_bit64_arg(J, ct, rb, rbv);
   tr2 = rcv ? crec_bit64_arg(J, ct, rc, rcv) : 0;
   tr = emitir(IRT(op, id-CTID_INT64+IRT_I64), tr, tr2);
-  if (op == IR_BAND) {
-    cTValue *mv = (rcv && (tvisint(rcv) || tvisnum(rcv))) ? rcv :
-		  ((rbv && (tvisint(rbv) || tvisnum(rbv))) ? rbv : NULL);
-    if (mv) {
-      lua_Number m = tvisint(mv) ? (lua_Number)intV(mv) : numV(mv);
-      if (m >= 0.0 && m <= 4294967295.0) {
-	tr = emitconv(tr, IRT_INT, IRT_I64, 0);
-	return emitconv(tr, IRT_NUM, IRT_U32, 0);
-      }
-    }
-  }
   return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, id), tr);
 }
 
