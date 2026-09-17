@@ -171,10 +171,13 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   irt = rec_cdata_field_irt(cts, fct);
   if (irt < 0 && !(fct->info & CTF_BOOL)) return 0;
   if ((fct->info & CTF_BOOL)) {
-    tr = emitir(IRT(IR_XLOAD, IRT_U8), dpr, 0);
-    lj_ir_set(J, IRTGI(IR_NE), tr, lj_ir_kint(J, 0));
-    J->postproc = LJ_POST_FIXGUARD;
-    return TREF_TRUE;
+    GCcdata *cd = cdataV(&ix->tabv);
+    uint8_t *fp = (fused ? (uint8_t *)cdataptr(cd)
+			 : *(uint8_t **)cdataptr(cd)) + ofs;
+    int b = fct->size == 1 ? (*fp != 0) : (*(int32_t *)fp != 0);
+    tr = emitir(IRT(IR_XLOAD, fct->size == 1 ? IRT_U8 : IRT_INT), dpr, 0);
+    emitir(IRTGI(b ? IR_NE : IR_EQ), tr, lj_ir_kint(J, 0));
+    return b ? TREF_TRUE : TREF_FALSE;
   }
   if (irt == IRT_INT && ctype_isnum(fct->info) && !(fct->info & CTF_FP) &&
       (fct->info & CTF_UNSIGNED)) {
