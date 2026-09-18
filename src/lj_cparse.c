@@ -382,6 +382,7 @@ typedef struct CPDecl {
   CTInfo specattr;	/* Saved attributes. */
   CTInfo specfattr;	/* Saved function attributes. */
   CTSize bits;		/* Field size in bits (if any). */
+  CTSize offset;	/* Explicit field offset (if any). */
   CType stack[CPARSE_MAX_DECLSTACK];  /* Type declaration stack. */
 } CPDecl;
 
@@ -975,6 +976,7 @@ static void cp_decl_reset(CPDecl *decl)
   decl->fattr = decl->specfattr;
   decl->name = NULL;
   decl->redir = NULL;
+  decl->offset = CTSIZE_INVALID;
 }
 
 /* Parse constant initializer. */
@@ -1284,6 +1286,7 @@ static void cp_struct_layout(CPState *cp, CTypeID sid, CTInfo sattr)
   CType *sct = ctype_get(cp->cts, sid);
   CTInfo sinfo = sct->info;
   CTypeID fieldid = sct->sib;
+  int has_explicit_size = (sattr & CTFP_EXPLICIT_OFFSET) != 0;
   while (fieldid) {
     CType *ct = ctype_get(cp->cts, fieldid);
     CTInfo attr = ct->size;  /* Field declaration attributes (temp.). */
@@ -1309,40 +1312,22 @@ static void cp_struct_layout(CPState *cp, CTypeID sid, CTInfo sattr)
 	align = ctype_align(attr);
       if (cp->packstack[cp->curpack] < align)
 	align = cp->packstack[cp->curpack];
-      bsz = ctype_bitcsz(ct->info);  /* Bitfield size (temp.). */
-      if (align > maxalign && bsz) maxalign = align;
       amask = (8u << align) - 1;
 
-      if (bsz == CTBSZ_FIELD || !ctype_isfield(ct->info)) {
-	bsz = csz;  /* Regular fields or subtypes always fill the container. */
+      if (ct->info & CTFP_EXPLICIT_OFFSET) {  /* Explicit offset field. */
+	bofs = (ct->size << 3);  /* Use explicit offset. */
+	bsz = csz;  /* Regular field fills the container. */
+	ct->size = (bofs >> 3);  /* Store field offset. */
+	if (ctype_isfield(ct->info))
+	  ct->info = CTINFO(CT_FIELD, ctype_cid(ct->info)) +
+		     CTALIGN(align) + (ct->info & CTF_PRIVATE);
+      } else {  /* Regular field. */
+	bsz = csz;  /* Regular fields always fill the container. */
 	bofs = (bofs + amask) & ~amask;  /* Start new aligned field. */
 	ct->size = (bofs >> 3);  /* Store field offset. */
 	if (ctype_isfield(ct->info))
 	  ct->info = CTINFO(CT_FIELD, ctype_cid(ct->info)) +
 		     CTALIGN(align) + (ct->info & CTF_PRIVATE);
-      } else {  /* Bitfield. */
-	if (bsz == 0 || (attr & CTFP_ALIGNED) ||
-	    (!((attr|sattr) & CTFP_PACKED) && (bofs & amask) + bsz > csz))
-	  bofs = (bofs + amask) & ~amask;  /* Start new aligned field. */
-
-	/* Prefer regular field over bitfield. */
-	if (bsz == csz && (bofs & amask) == 0) {
-	  ct->info = CTINFO(CT_FIELD, ctype_cid(ct->info)) +
-		     CTALIGN(lj_fls(sz));
-	  ct->size = (bofs >> 3);  /* Store field offset. */
-	} else {
-	  if (csz > amask+1 && bsz <= amask+1)
-	    csz = amask+1;  /* Shrink container of packed bitfield. */
-	  ct->info = CTINFO(CT_BITFIELD,
-	    (info & (CTF_QUAL|CTF_UNSIGNED|CTF_BOOL)) +
-	    (csz << (CTSHIFT_BITCSZ-3)) + (bsz << CTSHIFT_BITBSZ));
-#if LJ_BE
-	  ct->info += ((csz - (bofs & (csz-1)) - bsz) << CTSHIFT_BITPOS);
-#else
-	  ct->info += ((bofs & (csz-1)) << CTSHIFT_BITPOS);
-#endif
-	  ct->size = ((bofs & ~(csz-1)) >> 3);  /* Store container offset. */
-	}
       }
 
       /* Determine next offset or max. offset. */
@@ -1358,9 +1343,11 @@ static void cp_struct_layout(CPState *cp, CTypeID sid, CTInfo sattr)
 
   /* Complete struct/union. */
   sct->info = sinfo + CTALIGN(maxalign);
-  bofs = (sinfo & CTF_UNION) ? bmaxofs : bofs;
-  maxalign = (8u << maxalign) - 1;
-  sct->size = (((bofs + maxalign) & ~maxalign) >> 3);
+  if (!has_explicit_size) {
+    bofs = (sinfo & CTF_UNION) ? bmaxofs : bofs;
+    maxalign = (8u << maxalign) - 1;
+    sct->size = (((bofs + maxalign) & ~maxalign) >> 3);
+  }
 }
 
 /* Parse struct/union declaration. */
@@ -1394,6 +1381,7 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 
 	/* Parse field declarator. */
 	decl.bits = CTSIZE_INVALID;
+	decl.offset = CTSIZE_INVALID;
 	cp_declarator(cp, &decl);
 	ctypeid = cp_decl_intern(cp, &decl);
 
@@ -1404,14 +1392,13 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 	  lastid = fieldid;
 	  ctype_setname(ct, decl.name);
 	} else {
-	  CTSize bsz = CTBSZ_FIELD;  /* Temp. for layout phase. */
 	  CType *ct;
 	  CTypeID fieldid = lj_ctype_new(cp->cts, &ct);  /* Do this first. */
 	  CType *tct = ctype_raw(cp->cts, ctypeid);
 
-	  if ((ispadding || isprivate) && decl.bits != CTSIZE_INVALID)
+	  if ((ispadding || isprivate) && decl.offset != CTSIZE_INVALID)
 	    cp_errmsg(cp, ':', LJ_ERR_BADVAL);
-	  if (decl.bits == CTSIZE_INVALID) {  /* Regular field. */
+	  if (decl.offset == CTSIZE_INVALID) {  /* Regular field. */
 	    if (ctype_isarray(tct->info) && tct->size == CTSIZE_INVALID)
 	      lastdecl = 1;  /* a[] or a[?] must be the last declared field. */
 
@@ -1428,17 +1415,20 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 			 (decl.attr|0x80000000u) : 0;  /* For layout phase. */
 	      goto add_field;
 	    }
-	  } else {  /* Bitfield. */
-	    bsz = decl.bits;
-	    if (!ctype_isinteger_or_bool(tct->info) ||
-		(bsz == 0 && decl.name) || 8*tct->size > CTBSZ_MAX ||
-		bsz > ((tct->info & CTF_BOOL) ? 1 : 8*tct->size))
+	  } else {  /* Explicit offset field. */
+	    /* RGON: Bitfield support (temporarily?) removed in favor of explicit offsets. */
+	    if (decl.bits != CTSIZE_INVALID)
 	      cp_errmsg(cp, ':', LJ_ERR_BADVAL);
 	  }
 
 	  /* Create temporary field for layout phase. */
-	  ct->info = CTINFO(CT_FIELD, ctypeid + (bsz << CTSHIFT_BITCSZ));
-	  ct->size = decl.attr;
+	  if (decl.offset != CTSIZE_INVALID) {
+	    ct->info = CTINFO(CT_FIELD, ctypeid) + CTFP_EXPLICIT_OFFSET;
+	    ct->size = decl.offset;
+	  } else {
+	    ct->info = CTINFO(CT_FIELD, ctypeid);
+	    ct->size = decl.attr;
+	  }
 	  if (decl.name && !ispadding) {
 	    ctype_setname(ct, decl.name);
 	    if (isprivate) ct->info |= CTF_PRIVATE;
@@ -1453,7 +1443,12 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
       }
       cp_check(cp, ';');
     }
-    cp_check(cp, '}');
+     cp_check(cp, '}');
+    if (cp_opt(cp, ':')) {  /* Explicit struct size. */
+      CTSize sz = cp_expr_ksize(cp);
+      ctype_get(cp->cts, sid)->size = sz;
+      sdecl->attr |= CTFP_EXPLICIT_OFFSET;
+    }
     ctype_get(cp->cts, lastid)->sib = 0;  /* Drop sib = 1 for empty structs. */
     cp_decl_attributes(cp, sdecl);  /* Layout phase needs postfix attributes. */
     cp_struct_layout(cp, sid, sdecl->attr);
@@ -1528,6 +1523,7 @@ static CPscl cp_decl_spec(CPState *cp, CPDecl *decl, CPscl scl)
   decl->redir = NULL;
   decl->attr = 0;
   decl->fattr = 0;
+  decl->offset = CTSIZE_INVALID;
   decl->pos = decl->top = 0;
   decl->stack[0].next = 0;
 
@@ -1762,8 +1758,8 @@ static void cp_declarator(CPState *cp, CPDecl *decl)
     }
   }
 
-  if ((decl->mode & CPARSE_MODE_FIELD) && cp_opt(cp, ':'))  /* Field width. */
-    decl->bits = cp_expr_ksize(cp);
+  if ((decl->mode & CPARSE_MODE_FIELD) && cp_opt(cp, ':'))  /* Explicit offset. */
+    decl->offset = cp_expr_ksize(cp);
 
   /* Process postfix attributes. */
   cp_decl_attributes(cp, decl);

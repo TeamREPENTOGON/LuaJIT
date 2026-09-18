@@ -69,6 +69,7 @@ LJ_STATIC_ASSERT(((int)CT_STRUCT & (int)CT_ARRAY) == CT_STRUCT);
 #define CTF_LONG	0x00400000u	/* Long: NUM. */
 #define CTF_VLA		0x00100000u	/* Variable-length: ARRAY, STRUCT. */
 #define CTF_PRIVATE	0x08000000u	/* Private: FIELD (not public). */
+#define CTFP_EXPLICIT_OFFSET 0x00200000u	/* Explicit field offset: FIELD. */
 #define CTF_REF		0x00800000u	/* Reference: PTR. */
 #define CTF_VECTOR	0x08000000u	/* Vector: ARRAY. */
 #define CTF_COMPLEX	0x04000000u	/* Complex: ARRAY. */
