@@ -95,7 +95,9 @@ int rec_cdata_field_irt(CTState *cts, CType *ct)
       if (ct->size == 8) return IRT_NUM;
       return -1;
     }
-    if (ct->size <= 4) return IRT_INT;
+    if (ct->size == 1) return (info & CTF_UNSIGNED) ? IRT_U8 : IRT_I8;
+    if (ct->size == 2) return (info & CTF_UNSIGNED) ? IRT_U16 : IRT_I16;
+    if (ct->size == 4) return IRT_INT;
     if (ct->size == 8) return (info & CTF_UNSIGNED) ? IRT_U64 : IRT_I64;
     return -1;
   }
@@ -137,6 +139,8 @@ CType *rec_cdata_field_resolve(jit_State *J, RecordIndex *ix,
   while (ctype_isattrib(ct->info)) ct = ctype_child(cts, ct);
   fct = lj_ctype_getfieldq(cts, ct, strV(&ix->keyv), ofs, NULL);
   if (!fct || (ctype_isprivate(fct->info) && !allowprivate)) return NULL;
+  if (!tref_isk(ix->key))
+    emitir(IRTG(IR_EQ, IRT_STR), ix->key, lj_ir_kstr(J, strV(&ix->keyv)));
   *basep = base;
   return ctype_rawchild(cts, fct);
 }
@@ -261,16 +265,13 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
       return 0;
     }
     break;
+  case IRT_I8: case IRT_U8: case IRT_I16: case IRT_U16:
   case IRT_INT:
     if (tref_isinteger(val)) {
     } else if (tref_isnum(val)) {
-      if ((fct->info & CTF_UNSIGNED)) {
-	val = lj_opt_narrow_tobit(J, val);
-      } else {
-	lj_needsplit(J);
-	val = emitir(IRTN(IR_CONV), val, (IRT_I64<<IRCONV_DSH)|IRT_NUM);
-	val = emitir(IRTI(IR_CONV), val, (IRT_INT<<IRCONV_DSH)|IRT_I64);
-      }
+      lj_needsplit(J);
+      val = rec_cdata_conv(J, val, IRT_I64, IRT_NUM, IRCONV_ANY);
+      val = rec_cdata_conv(J, val, IRT_INT, IRT_I64, 0);
     } else if (tref_typerange(val, IRT_I64, IRT_U64)) {
       val = rec_cdata_conv(J, val, IRT_INT, tref_type(val), IRCONV_ANY);
     } else {
