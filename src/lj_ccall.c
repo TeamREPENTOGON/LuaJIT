@@ -1218,6 +1218,8 @@ static int ccall_get_results(lua_State *L, CTState *cts, CType *ct,
   /* No reference types end up here, so there's no need for the CTypeID. */
   lj_assertL(!(ctype_isrefarray(ctr->info) || ctype_isstruct(ctr->info)),
 	     "unexpected reference ctype");
+  if (ctype_isptr(ctr->info))
+    setboolV(&G(L)->tmptv2, *(void **)sp != NULL);
   return lj_cconv_tv_ct(cts, ctr, 0, L->top-1, sp);
 }
 
@@ -1234,12 +1236,18 @@ int lj_ccall_func(lua_State *L, GCcdata *cd)
   if (ctype_isfunc(ct->info)) {
     CTypeID id = ctype_typeid(cts, ct);
     CCallState cc;
-    int gcsteps, ret;
+    int gcsteps, ret, reentered;
+    uint8_t watch;
     cc.func = (void (*)(void))cdata_getptr(cdataptr(cd), sz);
     gcsteps = ccall_set_args(L, cts, ct, &cc);
     cts->cb.slot = ~0u;
+    watch = G(L)->ffi_callwatch;
+    G(L)->ffi_callwatch = 1;
     lj_vm_ffi_call(&cc);
-    if (cts->cb.slot != ~0u) {  /* Blacklist function that called a callback. */
+    reentered = !G(L)->ffi_callwatch;
+    G(L)->ffi_callwatch = watch;
+    /* Blacklist function that called a callback or re-entered the Lua API. */
+    if (cts->cb.slot != ~0u || reentered) {
       TValue tv;
       tv.u64 = ((uintptr_t)(void *)cc.func >> 2) | U64x(800000000, 00000000);
       setboolV(lj_tab_set(L, cts->miscmap, &tv), 1);

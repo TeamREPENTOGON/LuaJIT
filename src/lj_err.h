@@ -36,6 +36,20 @@ LJ_FUNC_NORET void lj_err_comp(lua_State *L, cTValue *o1, cTValue *o2);
 LJ_FUNC_NORET void lj_err_optype_call(lua_State *L, TValue *o);
 LJ_FUNC_NORET void lj_err_callermsg(lua_State *L, const char *msg);
 LJ_FUNC_NORET void lj_err_callerv(lua_State *L, ErrMsg em, ...);
+
+#if defined(_MSC_VER)
+#define LJ_API_FUNCNAME		__FUNCTION__
+#else
+#define LJ_API_FUNCNAME		__func__
+#endif
+LJ_FUNC void lj_err_apienter(lua_State *L, const char *fn);
+#define lj_api_enter(L) \
+  do { \
+    global_State *g_api_ = G(L); \
+    if (LJ_UNLIKELY(tvref(g_api_->jit_base) != NULL || g_api_->ffi_callwatch)) \
+      lj_err_apienter((L), LJ_API_FUNCNAME); \
+  } while (0)
+
 LJ_FUNC_NORET void lj_err_caller(lua_State *L, ErrMsg em);
 LJ_FUNC_NORET void lj_err_arg(lua_State *L, int narg, ErrMsg em);
 LJ_FUNC_NORET void lj_err_argv(lua_State *L, int narg, ErrMsg em, ...);

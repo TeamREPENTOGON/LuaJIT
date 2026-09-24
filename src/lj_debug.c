@@ -409,6 +409,7 @@ void lj_debug_pushloc(lua_State *L, GCproto *pt, BCPos pc)
 
 LUA_API const char *lua_getlocal(lua_State *L, const lua_Debug *ar, int n)
 {
+  lj_api_enter(L);
   const char *name = NULL;
   if (ar) {
     TValue *o = debug_localname(L, ar, &name, (BCReg)n);
@@ -424,6 +425,7 @@ LUA_API const char *lua_getlocal(lua_State *L, const lua_Debug *ar, int n)
 
 LUA_API const char *lua_setlocal(lua_State *L, const lua_Debug *ar, int n)
 {
+  lj_api_enter(L);
   const char *name = NULL;
   TValue *o = debug_localname(L, ar, &name, (BCReg)n);
   if (name)
@@ -537,11 +539,13 @@ int lj_debug_getinfo(lua_State *L, const char *what, lj_Debug *ar, int ext)
 
 LUA_API int lua_getinfo(lua_State *L, const char *what, lua_Debug *ar)
 {
+  lj_api_enter(L);
   return lj_debug_getinfo(L, what, (lj_Debug *)ar, 0);
 }
 
 LUA_API int lua_getstack(lua_State *L, int level, lua_Debug *ar)
 {
+  lj_api_enter(L);
   int size;
   cTValue *frame = lj_debug_frame(L, level, &size);
   if (frame) {

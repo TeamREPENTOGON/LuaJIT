@@ -201,10 +201,10 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
       uint8_t *fp = (fused ? (uint8_t *)cdataptr(cd)
 			   : *(uint8_t **)cdataptr(cd)) + ofs;
       if (*(void **)fp == NULL) {
-	emitir(IRTG(IR_EQ, IRT_PTR), tr, lj_ir_knull(J, IRT_PTR));
+	emitir(IRTG(IR_EQ, IRT_PTR), tr, lj_ir_kptr(J, NULL));
 	return TREF_NIL;
       }
-      emitir(IRTG(IR_NE, IRT_PTR), tr, lj_ir_knull(J, IRT_PTR));
+      emitir(IRTG(IR_NE, IRT_PTR), tr, lj_ir_kptr(J, NULL));
     }
     return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, ctype_typeid(cts, fct)), tr);
   }
@@ -2585,6 +2585,16 @@ void lj_record_ins(jit_State *J)
 	    break;
 	  }
       }
+      if (bc_op(*J->pc) >= BC__MAX ||
+	  bc_op(*J->pc) == BC_FUNCC || bc_op(*J->pc) == BC_FUNCCW) {
+	J->postproc = LJ_POST_FFRETRY;
+	return;
+      }
+      break;
+    case LJ_POST_FIXCDATANULL:
+      if (!tvistruecond(&J2G(J)->tmptv2))
+	lj_trace_err(J, LJ_TRERR_GFAIL);
+      lj_opt_fold(J);
       if (bc_op(*J->pc) >= BC__MAX ||
 	  bc_op(*J->pc) == BC_FUNCC || bc_op(*J->pc) == BC_FUNCCW) {
 	J->postproc = LJ_POST_FFRETRY;

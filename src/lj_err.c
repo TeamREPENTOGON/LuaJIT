@@ -6,6 +6,8 @@
 #define lj_err_c
 #define LUA_CORE
 
+#include <stdio.h>
+
 #include "lj_obj.h"
 #include "lj_err.h"
 #include "lj_debug.h"
@@ -1125,6 +1127,64 @@ LJ_NOINLINE void lj_err_argt(lua_State *L, int narg, int tt)
   lj_err_argtype(L, narg, lj_obj_typename[tt+1]);
 }
 
+static void (*api_fatalf)(const char *msg);
+
+/* Let the host see the fatal message (e.g. write it to its own log). */
+LUA_API void luaJIT_setapifatal(void (*f)(const char *msg))
+{
+  api_fatalf = f;
+}
+
+static LJ_NOINLINE void api_reentry_fatal(global_State *g, const char *fn)
+{
+  char buf[3072];
+  int n = snprintf(buf, sizeof(buf),
+    "LuaJIT: %s() was called while JIT trace %d was running.\n"
+    "A C function called through the FFI from compiled code re-entered the "
+    "Lua C API. This call site must not be JIT-compiled.\n",
+    fn, (int)g->vmstate);
+#if LJ_ABI_WIN
+  {
+    void *frames[32];
+    USHORT i, nf = RtlCaptureStackBackTrace(2, 32, frames, NULL);
+    n += snprintf(buf+n, sizeof(buf)-n, "Native stack:\n");
+    for (i = 0; i < nf && n > 0 && n < (int)sizeof(buf)-160; i++) {
+      HMODULE mod = NULL;
+      char path[MAX_PATH];
+      const char *name = "?";
+      uintptr_t addr = (uintptr_t)frames[i];
+      if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+			     GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			     (LPCSTR)frames[i], &mod) &&
+	  GetModuleFileNameA(mod, path, MAX_PATH)) {
+	const char *slash = strrchr(path, '\\');
+	name = slash ? slash+1 : path;
+	addr -= (uintptr_t)mod;
+      }
+      n += snprintf(buf+n, sizeof(buf)-n, "  #%02u %s+0x%08x\n",
+		    (unsigned)i, name, (unsigned)addr);
+    }
+  }
+#endif
+  if (api_fatalf) api_fatalf(buf);
+  fputs(buf, stderr);
+  fflush(stderr);
+#if LJ_ABI_WIN
+  OutputDebugStringA(buf);
+  RaiseFailFastException(NULL, NULL, 0);
+#endif
+  exit(EXIT_FAILURE);
+}
+
+void lj_err_apienter(lua_State *L, const char *fn)
+{
+  global_State *g = G(L);
+  if (tvref(g->jit_base) != NULL)
+    api_reentry_fatal(g, fn);
+  g->ffi_callwatch = 0;
+  lj_trace_abort(g);
+}
+
 /* -- Public error handling API ------------------------------------------- */
 
 LUA_API lua_CFunction lua_atpanic(lua_State *L, lua_CFunction panicf)
@@ -1137,6 +1197,7 @@ LUA_API lua_CFunction lua_atpanic(lua_State *L, lua_CFunction panicf)
 /* Forwarders for the public API (C calling convention and no LJ_NORET). */
 LUA_API int lua_error(lua_State *L)
 {
+  lj_api_enter(L);
   lj_err_run(L);
   return 0;  /* unreachable */
 }

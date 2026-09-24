@@ -62,6 +62,7 @@ static TValue *cpparser(lua_State *L, lua_CFunction dummy, void *ud)
 LUA_API int lua_loadx(lua_State *L, lua_Reader reader, void *data,
 		      const char *chunkname, const char *mode)
 {
+  lj_api_enter(L);
   LexState ls;
   int status;
   ls.rfunc = reader;
@@ -174,6 +175,7 @@ LUALIB_API int luaL_loadstring(lua_State *L, const char *s)
 
 LUA_API int lua_dump(lua_State *L, lua_Writer writer, void *data)
 {
+  lj_api_enter(L);
   cTValue *o = L->top-1;
   uint32_t flags = LJ_FR2*BCDUMP_F_FR2;  /* Default mode for legacy C API. */
   lj_checkapi(L->top > L->base, "top slot empty");

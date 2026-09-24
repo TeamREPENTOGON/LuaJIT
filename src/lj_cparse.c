@@ -1396,7 +1396,7 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 	  CTypeID fieldid = lj_ctype_new(cp->cts, &ct);  /* Do this first. */
 	  CType *tct = ctype_raw(cp->cts, ctypeid);
 
-	  if ((ispadding || isprivate) && decl.offset != CTSIZE_INVALID)
+	  if (ispadding && decl.offset != CTSIZE_INVALID)
 	    cp_errmsg(cp, ':', LJ_ERR_BADVAL);
 	  if (decl.offset == CTSIZE_INVALID) {  /* Regular field. */
 	    if (ctype_isarray(tct->info) && tct->size == CTSIZE_INVALID)
@@ -1416,7 +1416,7 @@ static CTypeID cp_decl_struct(CPState *cp, CPDecl *sdecl, CTInfo sinfo)
 	      goto add_field;
 	    }
 	  } else {  /* Explicit offset field. */
-	    /* RGON: Bitfield support (temporarily?) removed in favor of explicit offsets. */
+	    /* RGON: Bitfield support removed in favor of explicit offsets. */
 	    if (decl.bits != CTSIZE_INVALID)
 	      cp_errmsg(cp, ':', LJ_ERR_BADVAL);
 	  }

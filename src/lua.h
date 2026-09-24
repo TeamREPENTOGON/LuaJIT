@@ -117,6 +117,8 @@ LUA_API lua_State *(lua_newthread) (lua_State *L);
 
 LUA_API lua_CFunction (lua_atpanic) (lua_State *L, lua_CFunction panicf);
 
+LUA_API void (luaJIT_setapifatal) (void (*f)(const char *msg));
+
 
 /*
 ** basic stack manipulation
