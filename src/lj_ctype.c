@@ -357,6 +357,26 @@ CTInfo lj_ctype_info_raw(CTState *cts, CTypeID id, CTSize *szp)
 }
 
 /* Get ctype metamethod. */
+CTypeID lj_ctype_metaid(CTState *cts, CTypeID id)
+{
+  CType *ct = ctype_get(cts, id);
+  while (ctype_isattrib(ct->info) || ctype_isref(ct->info)) {
+    id = ctype_cid(ct->info);
+    ct = ctype_get(cts, id);
+  }
+  if (ctype_isptr(ct->info)) {
+    CTypeID cid = ctype_cid(ct->info);
+    CType *cct = ctype_get(cts, cid);
+    while (ctype_isattrib(cct->info)) {
+      cid = ctype_cid(cct->info);
+      cct = ctype_get(cts, cid);
+    }
+    if (ctype_isstruct(cct->info))
+      id = cid;
+  }
+  return id;
+}
+
 cTValue *lj_ctype_meta(CTState *cts, CTypeID id, MMS mm)
 {
   CType *ct = ctype_get(cts, id);

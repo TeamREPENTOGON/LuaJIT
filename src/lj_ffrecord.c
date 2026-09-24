@@ -1640,7 +1640,7 @@ static void LJ_FASTCALL recff_debug_getmetatable(jit_State *J, RecordFFData *rd)
   } else if (tref_iscdata(tr)) {
     CTState *cts = ctype_cts(J->L);
     CTypeID id = cdataV(&rd->argv[0])->ctypeid;
-    cTValue *tv = lj_tab_getinth(cts->miscmap, -(int32_t)id);
+    cTValue *tv = lj_tab_getinth(cts->miscmap, -(int32_t)lj_ctype_metaid(cts, id));
     TRef trid = emitir(IRT(IR_FLOAD, IRT_U16), tr, IRFL_CDATA_CTYPEID);
     emitir(IRTG(IR_EQ, IRT_INT), trid, lj_ir_kint(J, (int32_t)id));
     mt = (tv && tvistab(tv)) ? tabV(tv)

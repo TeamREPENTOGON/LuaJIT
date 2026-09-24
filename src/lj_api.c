@@ -993,7 +993,8 @@ LUA_API int lua_getmetatable(lua_State *L, int idx)
 #if LJ_HASFFI
   if (tviscdata(o)) {
     CTState *cts = ctype_cts(L);
-    cTValue *tv = lj_tab_getint(cts->miscmap, -(int32_t)cdataV(o)->ctypeid);
+    CTypeID id = lj_ctype_metaid(cts, cdataV(o)->ctypeid);
+    cTValue *tv = lj_tab_getint(cts->miscmap, -(int32_t)id);
     if (tv && tvistab(tv))
       mt = tabV(tv);
   }
