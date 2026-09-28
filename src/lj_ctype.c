@@ -396,6 +396,16 @@ cTValue *lj_ctype_meta(CTState *cts, CTypeID id, MMS mm)
   return NULL;
 }
 
+int lj_ctype_ptrmeta(CTState *cts, CType *ct, MMS mm)
+{
+  if (ct && ctype_isptr(ct->info) && !ctype_isref(ct->info)) {
+    CTypeID cid = ctype_cid(ct->info);
+    if (ctype_isstruct(ctype_raw(cts, cid)->info))
+      return lj_ctype_meta(cts, cid, mm) != NULL;
+  }
+  return 0;
+}
+
 /* -- C type representation ----------------------------------------------- */
 
 /* Fixed max. length of a C type representation. */

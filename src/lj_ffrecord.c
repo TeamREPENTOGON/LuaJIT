@@ -234,7 +234,8 @@ static void LJ_FASTCALL recff_type(jit_State *J, RecordFFData *rd)
   else if (tviscdata(&rd->argv[0])) {
     CTState *cts = ctype_cts(J->L);
     CTypeID id = cdataV(&rd->argv[0])->ctypeid;
-    cTValue *mo = lj_tab_getinth(cts->miscmap, -(int32_t)id);
+    cTValue *mo = lj_tab_getinth(cts->miscmap,
+				 -(int32_t)lj_ctype_metaid(cts, id));
     TRef trid = emitir(IRT(IR_FLOAD, IRT_U16), J->base[0], IRFL_CDATA_CTYPEID);
     emitir(IRTG(IR_EQ, IRT_INT), trid, lj_ir_kint(J, (int32_t)id));
     t = (mo && tvistab(mo)) ? (uint32_t)~LJ_TUDATA : (uint32_t)~LJ_TCDATA;

@@ -75,7 +75,8 @@ LJLIB_ASM(type)			LJLIB_REC(.)
   if (tviscdata(o)) {
     CTState *cts = ctype_ctsG(G(L));
     cTValue *mo = cts ?
-      lj_tab_getinth(cts->miscmap, -(int32_t)cdataV(o)->ctypeid) : NULL;
+      lj_tab_getinth(cts->miscmap,
+		     -(int32_t)lj_ctype_metaid(cts, cdataV(o)->ctypeid)) : NULL;
     setstrV(L, L->base-1-LJ_FR2,
 	    (mo && tvistab(mo)) ? lj_str_newlit(L, "userdata")
 				: lj_str_newlit(L, "cdata"));

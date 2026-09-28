@@ -1477,6 +1477,9 @@ static TRef crec_arith_ptr(jit_State *J, TRef *sp, CType **s, MMS mm)
   CTState *cts = ctype_ctsG(J2G(J));
   CType *ctp = s[0];
   if (!(sp[0] && sp[1])) return 0;
+  if ((lj_ctype_ptrmeta(cts, ctp, mm) || lj_ctype_ptrmeta(cts, s[1], mm)) &&
+      !(mm == MM_eq && (tref_isnil(J->base[0]) || tref_isnil(J->base[1]))))
+    return 0;
   if (ctype_isptr(ctp->info) || ctype_isrefarray(ctp->info)) {
     if ((mm == MM_sub || mm == MM_eq || mm == MM_lt || mm == MM_le) &&
 	(ctype_isptr(s[1]->info) || ctype_isrefarray(s[1]->info))) {

@@ -101,6 +101,10 @@ static int carith_ptr(lua_State *L, CTState *cts, CDArith *ca, MMS mm)
   CTSize sz;
   CTypeID id;
   GCcdata *cd;
+  /* Defer to the pointee's metamethod, except for NULL checks against nil. */
+  if ((lj_ctype_ptrmeta(cts, ctp, mm) || lj_ctype_ptrmeta(cts, ca->ct[1], mm)) &&
+      !(mm == MM_eq && (tvisnil(L->base) || tvisnil(L->base+1))))
+    return 0;
   if (ctype_isptr(ctp->info) || ctype_isrefarray(ctp->info)) {
     if ((mm == MM_sub || mm == MM_eq || mm == MM_lt || mm == MM_le) &&
 	(ctype_isptr(ca->ct[1]->info) || ctype_isrefarray(ca->ct[1]->info))) {
