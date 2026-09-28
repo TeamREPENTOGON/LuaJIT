@@ -32,6 +32,7 @@
 #include "lj_strfmt.h"
 #include "lj_ff.h"
 #include "lj_lib.h"
+#include "lj_trace.h"
 
 /* -- C type checks ------------------------------------------------------- */
 
@@ -826,6 +827,27 @@ LJLIB_CF(ffi_metatype)
   *(CTypeID *)cdataptr(cd) = id;
   setcdataV(L, L->top-1, cd);
   lj_gc_check(L);
+  return 1;
+}
+
+/* Explicitly mark a C function as one that re-enters Lua and should never compile. */
+LJLIB_CF(ffi_reentrant)
+{
+  GCcdata *cd = ffi_checkcdata(L, 1);
+  CTState *cts = ctype_cts(L);
+  CType *ct = ctype_raw(cts, cd->ctypeid);
+  CTSize sz = CTSIZE_PTR;
+  TValue tv;
+  if (ctype_isptr(ct->info)) {
+    sz = ct->size;
+    ct = ctype_rawchild(cts, ct);
+  }
+  if (!ctype_isfunc(ct->info))
+    lj_err_arg(L, 1, LJ_ERR_FFI_INVTYPE);
+  tv.u64 = ((uintptr_t)cdata_getptr(cdataptr(cd), sz) >> 2) | U64x(800000000, 00000000);
+  setboolV(lj_tab_set(L, cts->miscmap, &tv), 1);
+  lj_trace_flushall(L);  /* Drop traces that already call it directly. */
+  L->top = L->base+1;  /* Pass through the function. */
   return 1;
 }
 
