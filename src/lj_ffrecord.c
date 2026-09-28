@@ -188,6 +188,11 @@ static void LJ_FASTCALL recff_nyi(jit_State *J, RecordFFData *rd)
   }
 }
 
+void LJ_FASTCALL lj_ffrecord_nyi(jit_State *J, RecordFFData *rd)
+{
+  recff_nyi(J, rd);
+}
+
 /* Fallback handler for unsupported variants of fast functions. */
 #define recff_nyiu	recff_nyi
 

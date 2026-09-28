@@ -1326,8 +1326,10 @@ static int crec_call(jit_State *J, RecordFFData *rd, GCcdata *cd)
     TValue tv;
     /* Check for blacklisted C functions that might call a callback. */
     tv.u64 = ((uintptr_t)cdata_getptr(cdataptr(cd), (LJ_64 && tp == IRT_P64) ? 8 : 4) >> 2) | U64x(800000000, 00000000);
-    if (tvistrue(lj_tab_get(J->L, cts->miscmap, &tv)))
-      lj_trace_err(J, LJ_TRERR_BLACKL);
+    if (tvistrue(lj_tab_get(J->L, cts->miscmap, &tv))) {
+      lj_ffrecord_nyi(J, rd);
+      return 1;
+    }
     if (ctype_isvoid(ctr_info)) {
       t = IRT_NIL;
       rd->nres = 0;
