@@ -39,6 +39,74 @@
 #define gray2black(x)		((x)->gch.marked |= LJ_GC_BLACK)
 #define isfinalized(u)		((u)->marked & LJ_GC_FINALIZED)
 
+/* Allow clients to specify userdata whose finalizers should be skipped. */
+#define GC_UDNOFIN_MAX	4
+static const void *gc_udnofin[GC_UDNOFIN_MAX];
+
+LUA_API void luaJIT_setudnofin(const void *vtable)
+{
+  int i;
+  for (i = 0; i < GC_UDNOFIN_MAX; i++) {
+    if (gc_udnofin[i] == vtable) return;
+    if (!gc_udnofin[i]) { gc_udnofin[i] = vtable; return; }
+  }
+}
+
+static int gc_udtrivialfin(GCudata *ud)
+{
+  if (ud->udtype == UDTYPE_USERDATA && ud->len >= sizeof(void *)) {
+    const void *vt = *(const void **)uddata(ud);
+    int i;
+    for (i = 0; i < GC_UDNOFIN_MAX && gc_udnofin[i]; i++)
+      if (gc_udnofin[i] == vt) return 1;
+  }
+  return 0;
+}
+
+static void gc_unlinkobj(global_State *g, GCRef *p, GCobj *o)
+{
+  if (mref(g->gc.sweep, GCRef) == &o->gch.nextgc)
+    setmref(g->gc.sweep, p);
+  setgcrefr(*p, o->gch.nextgc);
+}
+
+void lj_gc_udatamt(global_State *g, GCudata *ud, GCtab *mt)
+{
+  GCobj *o = obj2gco(ud);
+  GCRef *udhead = &mainthread(g)->nextgc;
+  if (!mt || !lj_meta_fastg(g, mt, MM_gc) || gc_udtrivialfin(ud)) {
+    ud->marked |= LJ_GC_UDNOFIN;
+    if (gcref(*udhead) == o && iswhite(o)) {
+      gc_unlinkobj(g, udhead, o);
+      setgcrefr(o->gch.nextgc, g->gc.root);
+      setgcref(g->gc.root, o);
+    }
+  } else {
+    ud->marked &= (uint8_t)~LJ_GC_FINALIZED;
+    if ((ud->marked & LJ_GC_UDNOFIN)) {
+      GCRef *p = udhead;
+      GCobj *q;
+      ud->marked &= (uint8_t)~LJ_GC_UDNOFIN;
+      while ((q = gcref(*p)) != NULL && q != o)
+	p = &q->gch.nextgc;
+      if (q == o) return;  /* Still on the userdata list. */
+      for (p = &g->gc.root; (q = gcref(*p)) != obj2gco(mainthread(g));
+	   p = &q->gch.nextgc) {
+	if (q == o) {
+	  if ((g->gc.state == GCSsweepstring || g->gc.state == GCSsweep) &&
+	      !iswhite(o))
+	    makewhite(g, o);
+	  gc_unlinkobj(g, p, o);
+	  setgcrefr(o->gch.nextgc, *udhead);
+	  setgcref(*udhead, o);
+	  return;
+	}
+      }
+      lj_assertG(0, "userdata not in any GC list");
+    }
+  }
+}
+
 /* -- Mark phase ---------------------------------------------------------- */
 
 /* Mark a TValue (if needed). */
@@ -148,7 +216,8 @@ size_t lj_gc_separateudata(global_State *g, int all)
   struct { GCtab *mt; int nofin; } mtc[GC_UD_MT_CACHE];
   int mtcn = 0;
   while ((o = gcref(*p)) != NULL) {
-    if (!(iswhite(o) || all) || isfinalized(gco2ud(o))) {
+    if (!(iswhite(o) || all) || isfinalized(gco2ud(o)) ||
+	(o->gch.marked & LJ_GC_UDNOFIN)) {
       p = &o->gch.nextgc;  /* Nothing to do. */
     } else {
       GCtab *mt = tabref(gco2ud(o)->metatable);

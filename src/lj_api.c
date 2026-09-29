@@ -1208,11 +1208,7 @@ LUA_API int lua_setmetatable(lua_State *L, int idx)
     setgcref(ud->metatable, obj2gco(mt));
     if (mt)
       lj_gc_objbarrier(L, ud, mt);
-    if (mt && !lj_meta_fastg(g, mt, MM_gc)) {
-      markfinalized(obj2gco(ud));
-    } else {
-      ud->marked &= (uint8_t)~LJ_GC_FINALIZED;
-    }
+    lj_gc_udatamt(g, ud, mt);  /* Decide whether it needs finalizing. */
   } else {
     /* Flush cache, since traces specialize to basemt. But not during __gc. */
     if (lj_trace_flushall(L))

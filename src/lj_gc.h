@@ -21,6 +21,7 @@ enum {
 #define LJ_GC_WEAKKEY	0x08
 #define LJ_GC_WEAKVAL	0x10
 #define LJ_GC_CDATA_FIN	0x10
+#define LJ_GC_UDNOFIN	0x10
 #define LJ_GC_FIXED	0x20
 #define LJ_GC_SFIXED	0x40
 
@@ -60,6 +61,7 @@ LJ_FUNCA void LJ_FASTCALL lj_gc_step_fixtop(lua_State *L);
 LJ_FUNC int LJ_FASTCALL lj_gc_step_jit(global_State *g, MSize steps);
 #endif
 LJ_FUNC void lj_gc_fullgc(lua_State *L);
+LJ_FUNC void lj_gc_udatamt(global_State *g, GCudata *ud, GCtab *mt);
 
 /* GC check: drive collector forward if the GC threshold has been reached. */
 #define lj_gc_check(L) \
