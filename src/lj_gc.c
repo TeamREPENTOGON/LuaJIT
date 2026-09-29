@@ -255,6 +255,16 @@ size_t lj_gc_separateudata(global_State *g, int all)
 
 /* -- Propagation phase --------------------------------------------------- */
 
+static int gc_keyalive(cTValue *key)
+{
+  if (!tvisgcv(key)) return 1;
+  if (tvisstr(key)) {
+    gc_mark_str(strV(key));
+    return 1;
+  }
+  return !iswhite(gcV(key));
+}
+
 /* Traverse a table. */
 static int gc_traverse_tab(global_State *g, GCtab *t)
 {
@@ -299,7 +309,9 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
       if (!tvisnil(&n->val)) {  /* Mark non-empty slot. */
 	lj_assertG(!tvisnil(&n->key), "mark of nil key in non-empty slot");
 	if (!(weak & LJ_GC_WEAKKEY)) gc_marktv(g, &n->key);
-	if (!(weak & LJ_GC_WEAKVAL)) gc_marktv(g, &n->val);
+	if (!(weak & LJ_GC_WEAKVAL) &&
+	    (weak != LJ_GC_WEAKKEY || gc_keyalive(&n->key)))
+	  gc_marktv(g, &n->val);
       }
     }
   }
@@ -455,6 +467,33 @@ static size_t gc_propagate_gray(global_State *g)
   while (gcref(g->gc.gray) != NULL)
     m += propagatemark(g);
   return m;
+}
+
+static size_t gc_converge_ephemerons(global_State *g)
+{
+  size_t work = 0;
+  int changed;
+  do {
+    GCobj *o;
+    changed = 0;
+    for (o = gcref(g->gc.weak); o != NULL; o = gcref(gco2tab(o)->gclist)) {
+      GCtab *t = gco2tab(o);
+      if ((t->marked & LJ_GC_WEAK) == LJ_GC_WEAKKEY && t->hmask > 0) {
+	Node *node = noderef(t->node);
+	MSize i, hmask = t->hmask;
+	for (i = 0; i <= hmask; i++) {
+	  Node *n = &node[i];
+	  if (!tvisnil(&n->val) && tviswhite(&n->val) && gc_keyalive(&n->key)) {
+	    gc_mark(g, gcV(&n->val));
+	    changed = 1;
+	  }
+	}
+      }
+    }
+    if (changed)
+      work += gc_propagate_gray(g);
+  } while (changed);
+  return work;
 }
 
 /* -- Sweep phase --------------------------------------------------------- */
@@ -725,10 +764,12 @@ static void atomic(global_State *g, lua_State *L)
   setgcrefr(g->gc.gray, g->gc.grayagain);  /* Empty the 2nd chance list. */
   setgcrefnull(g->gc.grayagain);
   gc_propagate_gray(g);  /* Propagate it. */
+  gc_converge_ephemerons(g);
 
   udsize = lj_gc_separateudata(g, 0);  /* Separate userdata to be finalized. */
   gc_mark_mmudata(g);  /* Mark them. */
   udsize += gc_propagate_gray(g);  /* And propagate the marks. */
+  udsize += gc_converge_ephemerons(g);  /* Resurrected objects may be keys. */
 
   /* All marking done, clear weak tables. */
   gc_clearweak(g, gcref(g->gc.weak));
