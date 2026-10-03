@@ -603,6 +603,23 @@ static int trace_abort(jit_State *J)
     J->state = LJ_TRACE_ASM;
     return 1;  /* Retry ASM with new MCode area. */
   }
+  if (e != LJ_TRERR_RETRY && J->baseslot > 1 + LJ_FR2) {
+    TValue *startframe = L->base - (J->baseslot - 1 - LJ_FR2) - 1;
+    TValue *frame;
+    GCproto *callee = NULL;
+    for (frame = L->base - 1; frame > startframe && frame > tvref(L->stack);
+	 frame = frame_prev(frame)) {
+      if (frame_ispcall(frame) && isluafunc(frame_func(frame)))
+	callee = funcproto(frame_func(frame));
+    }
+    if (callee && callee != &gcref(J->cur.startpt)->pt &&
+	!(callee->flags & PROTO_NOJIT) &&
+	bc_op(proto_bc(callee)[0]) == BC_FUNCF) {
+      penalty_pc(J, callee, (BCIns *)proto_bc(callee), e);
+      if (bc_op(proto_bc(callee)[0]) == BC_FUNCF)
+	penalty_pc(J, callee, (BCIns *)proto_bc(callee), e);
+    }
+  }
   /* Penalize or blacklist starting bytecode instruction. */
   if (J->parent == 0 && !bc_isret(bc_op(J->cur.startins))) {
     if (J->exitno == 0) {

@@ -541,8 +541,23 @@ static void LJ_FASTCALL recff_xpairs(jit_State *J, RecordFFData *rd)
   }
 }
 
+static int recff_pcall_stitch(jit_State *J, RecordFFData *rd, cTValue *fo)
+{
+  if (tvisfunc(fo) && isluafunc(funcV(fo))) {
+    GCproto *pt = funcproto(funcV(fo));
+    BCOp op = bc_op(proto_bc(pt)[0]);
+    if (op == BC_IFUNCF || op == BC_IFUNCV || (pt->flags & PROTO_NOJIT)) {
+      recff_nyi(J, rd);
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static void LJ_FASTCALL recff_pcall(jit_State *J, RecordFFData *rd)
 {
+  if (J->maxslot >= 1 && recff_pcall_stitch(J, rd, &rd->argv[0]))
+    return;
   if (J->maxslot >= 1) {
 #if LJ_FR2
     /* Shift function arguments up. */
@@ -564,6 +579,8 @@ static TValue *recff_xpcall_cp(lua_State *L, lua_CFunction dummy, void *ud)
 
 static void LJ_FASTCALL recff_xpcall(jit_State *J, RecordFFData *rd)
 {
+  if (J->maxslot >= 2 && recff_pcall_stitch(J, rd, &rd->argv[0]))
+    return;
   if (J->maxslot >= 2) {
     TValue argv0, argv1;
     TRef tmp;

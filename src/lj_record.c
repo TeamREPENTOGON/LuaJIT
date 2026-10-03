@@ -1200,7 +1200,8 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
 				  (IRT_U32 << IRCONV_DSH) | IRT_U32);
     }
   }
-  while (frame_ispcall(frame)) {  /* Immediately resolve pcall() returns. */
+  while (frame_ispcall(frame) &&
+	 !(J->framedepth == 0 && J->pt && bc_isret(bc_op(*J->pc)))) {  /* Immediately resolve pcall() returns. */
     BCReg cbase = (BCReg)frame_delta(frame);
     if (--J->framedepth <= 0)
       lj_trace_err(J, LJ_TRERR_NYIRETL);
@@ -1346,6 +1347,9 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
     }
   } else {
     /* NYI: handle return to C frame. */
+    if (!J->pt) {
+      lj_trace_err(J, LJ_TRERR_NYIRETL);
+    }
     lj_record_stop(J, LJ_TRLINK_RETURN, 0);
     return;
   }
