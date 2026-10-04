@@ -322,6 +322,18 @@ void lj_cdata_set(CTState *cts, CType *d, uint8_t *dp, TValue *o, CTInfo qual)
     lj_err_caller(cts->L, LJ_ERR_FFI_WRCONST);
   }
 
+  if (ctype_isstruct(d->info) && tviscdata(o)) {
+    CType *s = ctype_get(cts, cdataV(o)->ctypeid);
+    if (ctype_isptr(s->info) && !ctype_isref(s->info) &&
+	ctype_rawchild(cts, s) == d) {
+      void *sp = *(void **)cdataptr(cdataV(o));
+      if (sp) {
+	memcpy(dp, sp, d->size);
+	return;
+      }
+    }
+  }
+
   lj_cconv_ct_tv(cts, d, dp, o, 0);
 }
 
