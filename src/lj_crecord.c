@@ -316,9 +316,9 @@ static void crec_fill_emit(jit_State *J, CRecMemList *ml, MSize mlp,
   }
 }
 
-/* Optimized memory fill. */
-static void crec_fill(jit_State *J, TRef trdst, TRef trlen, TRef trfill,
-		      CTSize step)
+/* Optimized memory fill. xbar: emit the alias-analysis barrier. */
+static void crec_fill_ex(jit_State *J, TRef trdst, TRef trlen, TRef trfill,
+			 CTSize step, int xbar)
 {
   if (tref_isk(trlen)) {  /* Length must be constant. */
     CRecMemList ml[CREC_FILL_MAXUNROLL];
@@ -348,8 +348,16 @@ static void crec_fill(jit_State *J, TRef trdst, TRef trlen, TRef trfill,
 fallback:
     /* Call memset. Always needs a barrier to disable alias analysis. */
     lj_ir_call(J, IRCALL_memset, trdst, trfill, trlen);  /* Note: arg order! */
+    xbar = 1;
   }
-  emitir(IRT(IR_XBAR, IRT_NIL), 0, 0);
+  if (xbar)
+    emitir(IRT(IR_XBAR, IRT_NIL), 0, 0);
+}
+
+static void crec_fill(jit_State *J, TRef trdst, TRef trlen, TRef trfill,
+		      CTSize step)
+{
+  crec_fill_ex(J, trdst, trlen, trfill, step, 1);
 }
 
 /* -- Convert C type to C type -------------------------------------------- */
@@ -1009,6 +1017,24 @@ static void crec_finalizer(jit_State *J, TRef trcd, TRef trfin, cTValue *fin)
 }
 
 /* Record cdata allocation. */
+static int crec_struct_has_gaps(CTState *cts, CType *d, CTSize sz)
+{
+  CTSize expected = 0;
+  CTypeID fid = d->sib;
+  while (fid) {
+    CType *df = ctype_get(cts, fid);
+    fid = df->sib;
+    if (ctype_isfield(df->info)) {
+      CType *dc;
+      if (!gcref(df->name)) return 1;  /* Unnamed field is skipped. */
+      dc = ctype_rawchild(cts, df);
+      if (df->size != expected) return 1;
+      expected = df->size + dc->size;
+    }
+  }
+  return expected != sz;
+}
+
 static void crec_alloc(jit_State *J, RecordFFData *rd, CTypeID id)
 {
   CTState *cts = ctype_ctsG(J2G(J));
@@ -1082,6 +1108,11 @@ static void crec_alloc(jit_State *J, RecordFFData *rd, CTypeID id)
     } else if (ctype_isstruct(d->info)) {
       CTypeID fid;
       MSize i = 1;
+      if (!(d->info & CTF_UNION) && crec_struct_has_gaps(cts, d, sz)) {
+	TRef dp = emitir(IRT(IR_ADD, IRT_PTR), trcd,
+			 lj_ir_kintp(J, sizeof(GCcdata)));
+	crec_fill_ex(J, dp, lj_ir_kint(J, sz), lj_ir_kint(J, 0), CTSIZE_PTR, 0);
+      }
       if (!J->base[1]) {  /* Handle zero-fill of struct-of-NYI. */
 	fid = d->sib;
 	while (fid) {
