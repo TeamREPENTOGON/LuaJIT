@@ -1237,6 +1237,20 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
     J->baseslot -= (BCReg)cbase;
     J->base -= cbase;
     frame = frame_prevd(frame);
+    while (frame_ispcall(frame)) {
+      cbase = (BCReg)frame_delta(frame);
+      if (--J->framedepth <= 0)
+	lj_trace_err(J, LJ_TRERR_NYIRETL);
+      lj_assertJ(J->baseslot > 1+LJ_FR2, "bad baseslot for return");
+      gotresults++;
+      baseadj += cbase;
+      rbase += cbase;
+      J->baseslot -= (BCReg)cbase;
+      J->base -= cbase;
+      J->base[--rbase] = TREF_TRUE;
+      frame = frame_prevd(frame);
+      J->needsnap = 1;
+    }
   }
   if (frame_islua(frame) ||
       (J->framedepth > 0 && frame_isc(frame) && isluafunc(frame_func(frame)))) {
@@ -1347,7 +1361,8 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
     }
   } else {
     /* NYI: handle return to C frame. */
-    if (!J->pt) {
+    /* The trace resumes at J->pc, so the slots must still describe that frame. */
+    if (!J->pt || baseadj) {
       lj_trace_err(J, LJ_TRERR_NYIRETL);
     }
     lj_record_stop(J, LJ_TRLINK_RETURN, 0);
