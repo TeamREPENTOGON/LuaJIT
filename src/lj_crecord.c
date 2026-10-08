@@ -2125,6 +2125,41 @@ TRef recff_bit64_bitop(jit_State *J, TRef rb, TRef rc,
   return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, id), tr);
 }
 
+void lj_crecord_copy(jit_State *J, TRef trdst, TRef trsrc, CTSize len, CType *ct)
+{
+  crec_copy(J, trdst, trsrc, lj_ir_kint(J, (int32_t)len), ct);
+}
+
+static void crec_bs_guard(jit_State *J, TRef tr, cTValue *tv)
+{
+  TRef trid = emitir(IRT(IR_FLOAD, IRT_U16), tr, IRFL_CDATA_CTYPEID);
+  emitir(IRTG(IR_EQ, IRT_INT), trid, lj_ir_kint(J, (int32_t)cdataV(tv)->ctypeid));
+}
+
+static TRef crec_bs_word(jit_State *J, TRef tr, CTSize ofs)
+{
+  TRef ptr = emitir(IRT(IR_ADD, IRT_PTR), tr, lj_ir_kintp(J, sizeof(GCcdata)+ofs));
+  return emitir(IRT(IR_XLOAD, IRT_INT), ptr, 0);
+}
+
+TRef recff_bitset128_op(jit_State *J, TRef rb, TRef rc,
+			TValue *rbv, TValue *rcv, IROp op)
+{
+  TRef dp;
+  CTSize ofs;
+  crec_bs_guard(J, rb, rbv);
+  if (rcv) crec_bs_guard(J, rc, rcv);
+  dp = emitir(IRTG(IR_CNEW, IRT_CDATA), lj_ir_kint(J, cdataV(rbv)->ctypeid), TREF_NIL);
+  for (ofs = 0; ofs < 16; ofs += 4) {
+    TRef w = crec_bs_word(J, rb, ofs);
+    TRef ptr;
+    w = emitir(IRTI(op), w, rcv ? crec_bs_word(J, rc, ofs) : 0);
+    ptr = emitir(IRT(IR_ADD, IRT_PTR), dp, lj_ir_kintp(J, sizeof(GCcdata)+ofs));
+    emitir(IRT(IR_XSTORE, IRT_INT), ptr, w);
+  }
+  return dp;
+}
+
 TRef recff_bit64_num(jit_State *J, TRef rb, TRef rc,
 		     TValue *rbv, TValue *rcv, IROp op)
 {

@@ -35,6 +35,10 @@ LJ_FUNC int LJ_FASTCALL recff_bit64_nary(jit_State *J, RecordFFData *rd);
 LJ_FUNC int recff_bit64_shift(jit_State *J, TRef *rb, TRef *rc,
 			      TValue *rbv, TValue *rcv, IROp op);
 LJ_FUNC TRef recff_bit64_tohex(jit_State *J, RecordFFData *rd, TRef hdr);
+LJ_FUNC void lj_crecord_copy(jit_State *J, TRef trdst, TRef trsrc, CTSize len,
+			    CType *ct);
+LJ_FUNC TRef recff_bitset128_op(jit_State *J, TRef rb, TRef rc,
+			       TValue *rbv, TValue *rcv, IROp op);
 LJ_FUNC TRef recff_bit64_bitop(jit_State *J, TRef rb, TRef rc,
 			       TValue *rbv, TValue *rcv, IROp op);
 LJ_FUNC TRef recff_bit64_num(jit_State *J, TRef rb, TRef rc,

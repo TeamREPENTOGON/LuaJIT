@@ -241,6 +241,22 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   return tr;
 }
 
+static TRef rec_cdata_unbox64(jit_State *J, RecordIndex *ix, TRef val)
+{
+  GCcdata *cd;
+  IRIns *ir;
+  if (!tref_iscdata(val) || !tviscdata(&ix->valv)) return 0;
+  cd = cdataV(&ix->valv);
+  if (cd->ctypeid != CTID_INT64 && cd->ctypeid != CTID_UINT64) return 0;
+  lj_needsplit(J);
+  ir = IR(tref_ref(val));
+  if (ir->o == IR_CNEWI && ir->op1 == tref_ref(lj_ir_kint(J, cd->ctypeid)))
+    return TREF(ir->op2, irt_type(IR(ir->op2)->t));  /* Boxed on trace. */
+  rec_cdata_ctype_guard(J, val, cd);
+  return emitir(IRT(IR_XLOAD, cd->ctypeid == CTID_UINT64 ? IRT_U64 : IRT_I64),
+		emitir(IRT(IR_ADD, IRT_PTR), val, lj_ir_kintp(J, sizeof(GCcdata))), 0);
+}
+
 /* Record a direct write to a scalar cdata struct field. */
 int rec_cdata_field_set(jit_State *J, RecordIndex *ix, int allowprivate)
 {
@@ -253,14 +269,35 @@ int rec_cdata_field_set(jit_State *J, RecordIndex *ix, int allowprivate)
 fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
   if (!fct) return 0;
   irt = rec_cdata_field_irt(cts, fct);
-  if (irt < 0 && !(fct->info & CTF_BOOL)) return 0;
+  if (irt < 0 && !(fct->info & CTF_BOOL) && !ctype_isstruct(fct->info)) return 0;
   if (fused)
     dpr = emitir(IRT(IR_ADD, IRT_PTR), ix->tab,
 		 lj_ir_kintp(J, (ptrdiff_t)sizeof(GCcdata) + ofs));
   else
     dpr = emitir(IRT(IR_ADD, IRT_PTR), base, lj_ir_kintp(J, (ptrdiff_t)ofs));
+  if (ctype_isstruct(fct->info)) {
+    GCcdata *vcd;
+    CType *vct;
+    TRef src;
+    if (!tref_iscdata(val) || !tviscdata(&ix->valv)) return 0;
+    vcd = cdataV(&ix->valv);
+    vct = ctype_raw(cts, vcd->ctypeid);
+    if (ctype_isref(vct->info) || ctype_isptr(vct->info)) {
+      if (ctype_rawchild(cts, vct) != fct || *(void **)cdataptr(vcd) == NULL)
+	return 0;
+      rec_cdata_ctype_guard(J, val, vcd);
+      src = emitir(IRT(IR_FLOAD, IRT_PTR), val, IRFL_CDATA_PTR);
+    } else if (vct == fct) {
+      rec_cdata_ctype_guard(J, val, vcd);
+      src = emitir(IRT(IR_ADD, IRT_PTR), val, lj_ir_kintp(J, sizeof(GCcdata)));
+    } else {
+      return 0;
+    }
+    lj_crecord_copy(J, dpr, src, fct->size, fct);
+    return 1;
+  }
   if ((fct->info & CTF_BOOL)) {
-    if (tref_isk(val) && tref_isbool(val)) {
+    if (tref_isbool(val)) {
       emitir(IRT(IR_XSTORE, IRT_U8), dpr,
 	     lj_ir_kint(J, tref_istrue(val) ? 1 : 0));
       return 1;
@@ -283,6 +320,14 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
     break;
   case IRT_I64: case IRT_U64:
     lj_needsplit(J);
+    {
+      TRef raw = rec_cdata_unbox64(J, ix, val);
+      if (raw) {
+	val = tref_type(raw) == (uint32_t)irt ? raw :
+	      rec_cdata_conv(J, raw, irt, tref_type(raw), 0);
+	break;
+      }
+    }
     if (tref_isinteger(val)) {
       val = rec_cdata_conv(J, val, irt, IRT_INT, IRCONV_ANY|IRCONV_SEXT);
     } else if (tref_isnum(val)) {
@@ -2925,7 +2970,7 @@ void lj_record_ins(jit_State *J)
 #if LJ_HASFFI
     if (tref_iscdata(rc)) {
       if (rec_cdata_is_bs(J, rcv)) {
-	lj_trace_err(J, LJ_TRERR_NYIBC);  /* Interpreter fast path handles it. */
+	rc = recff_bitset128_op(J, rc, 0, rcv, NULL, IR_BNOT);
 	break;
       }
       if (rec_cdata_has_mm(J, rcv, MM_bnot)) {
@@ -2955,7 +3000,7 @@ void lj_record_ins(jit_State *J)
     if (tref_iscdata(rb) || tref_iscdata(rc)) {
       if (tref_iscdata(rb) && tref_iscdata(rc) &&
 	  rec_cdata_is_bs(J, rbv) && rec_cdata_is_bs(J, rcv)) {
-	lj_trace_err(J, LJ_TRERR_NYIBC);  /* Interpreter fast path handles it. */
+	rc = recff_bitset128_op(J, rb, rc, rbv, rcv, (IROp)((int)op - (int)BC_BAND + (int)IR_BAND));
 	break;
       }
       MMS mmm = bcmode_mm(op);

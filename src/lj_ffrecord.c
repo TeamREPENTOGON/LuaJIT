@@ -1711,8 +1711,9 @@ void lj_ffrecord_func(jit_State *J)
     {
       TRef base; CTSize ofs; int fused;
       CType *fct = rec_cdata_field_resolve(J, &ix, &base, &ofs, &fused, 0);
-      if (fct && rec_cdata_field_irt(ctype_cts(J->L), fct) >= 0) {
-	/* Direct scalar field: intercepted below. */
+      if (fct && (rec_cdata_field_irt(ctype_cts(J->L), fct) >= 0 ||
+		  (isnew && ctype_isstruct(fct->info)))) {
+	/* Direct scalar field (or struct field store): intercepted below. */
       } else if (!isnew) {
 	CTState *cts = ctype_cts(J->L);
 	cTValue *mo = lj_ctype_meta(cts, cdataV(&ix.tabv)->ctypeid, MM_index);
@@ -1747,7 +1748,7 @@ void lj_ffrecord_func(jit_State *J)
       } else {
 	ix.val = v1;
       }
-      copyTV(J->L, &ix.valv, &J->L->base[2]);
+      copyTV(J->L, &ix.valv, &J->L->base[tref_isstr(v1) ? 2 : 1]);
       if (!rec_cdata_field_set(J, &ix, 0)) goto stock;
       J->needsnap = 1;
     } else {
