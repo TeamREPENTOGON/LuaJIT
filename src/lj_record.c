@@ -2638,8 +2638,24 @@ void lj_record_ins(jit_State *J)
       }
       break;
     case LJ_POST_FIXCDATANULL:
-      if (!tvistruecond(&J2G(J)->tmptv2))
-	lj_trace_err(J, LJ_TRERR_GFAIL);
+      if (!tvistruecond(&J2G(J)->tmptv2)) {
+	SnapShot *snap = &J->cur.snap[J->cur.nsnap-1];
+	SnapEntry *sn = &J->cur.snapmap[snap->mapofs+snap->nent-1];
+	TValue *tv = J->L->base;
+	BCReg s;
+	for (s = 0; s < J->maxslot; s++) {
+	  TRef tr = J->base[s];
+	  if (tref_iscdata(tr) && tvisnil(&tv[s]) &&
+	      IR(tref_ref(tr))->o == IR_CNEWI &&
+	      IR(tref_ref(tr))->op2 == J->fold.ins.op1)
+	    break;
+	}
+	if (s == J->maxslot || snap->nent == 0 || snap_ref(*sn) != REF_NIL)
+	  lj_trace_err(J, LJ_TRERR_GFAIL);
+	*sn = SNAP_TR(snap_slot(*sn), J->base[s]);
+	J->base[s] = TREF_NIL;
+	J->fold.ins.o ^= 1;
+      }
       lj_opt_fold(J);
       if (bc_op(*J->pc) >= BC__MAX ||
 	  bc_op(*J->pc) == BC_FUNCC || bc_op(*J->pc) == BC_FUNCCW) {
