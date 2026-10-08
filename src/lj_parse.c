@@ -824,11 +824,12 @@ static int foldbitop(BinOpr opr, ExpDesc *e1, ExpDesc *e2)
     case OPR_BAND: k1 &= k2; break;
     case OPR_BOR: k1 |= k2; break;
     case OPR_BXOR: k1 ^= k2; break;
-    case OPR_BSHL: k1 = (int64_t)((uint64_t)k1 << (k2 & 63)); break;
-    case OPR_BSHR: k1 = (int64_t)((uint64_t)k1 >> (k2 & 63)); break;
+    case OPR_BSHL: k1 = (int64_t)lj_shift53((uint64_t)k1, k2, 0); break;
+    case OPR_BSHR: k1 = (int64_t)lj_shift53((uint64_t)k1, k2, 1); break;
     case OPR_BSAR: k1 = (int64_t)k1 >> (k2 & 63); break;
     default: lj_assertX(0, "bad OPR %d", opr); break;
     }
+    if (k1 < -(1LL << 53) || k1 > (1LL << 53)) return 0;
     if (checki32(k1)) {
       setintV(&e1->u.nval, (int32_t)k1);
     } else {

@@ -331,22 +331,19 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
     case BC_BOR: b |= c; break;
     case BC_BXOR: b ^= c; break;
     default:
-      if (id) {
+      if (op != BC_BSAR) {
+	if (!id)
+	  b = tvisint(rb) ? (uint64_t)(int64_t)intV(rb) :
+	      tvisnum(rb) ? (uint64_t)lj_num2i64(numV(rb)) : b;
+	b = lj_shift53(b, (int64_t)c, op == BC_BSHR);
+      } else if (id) {
 	b = lj_carith_shift64(b, (int32_t)c, op-BC_BSHL);
       } else {
 	/* No cdata value operand: shift the plain operand as int64 (RGON). */
 	int64_t bv = tvisint(rb) ? (int64_t)intV(rb) :
 		     tvisnum(rb) ? lj_num2i64(numV(rb)) :
 		     (int64_t)lj_carith_checkbit64(L, rb, &id_ignore);
-	c &= 63;
-	switch (op) {
-	case BC_BSHL: b = (uint64_t)bv << c; break;
-	case BC_BSHR: b = (uint64_t)bv >> c; break;
-	default:
-	  lj_assertL(op == BC_BSAR, "bad bytecode op %d", op);
-	  b = (uint64_t)(bv >> c);
-	  break;
-	}
+	b = (uint64_t)(bv >> (c & 63));
       }
       break;
     }
@@ -382,8 +379,8 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
       case BC_BAND: bv &= cv; break;
       case BC_BOR: bv |= cv; break;
       case BC_BXOR: bv ^= cv; break;
-      case BC_BSHL: bv = (int64_t)((uint64_t)bv << (cv & 63)); break;
-      case BC_BSHR: bv = (int64_t)((uint64_t)bv >> (cv & 63)); break;
+      case BC_BSHL: bv = (int64_t)lj_shift53((uint64_t)bv, cv, 0); break;
+      case BC_BSHR: bv = (int64_t)lj_shift53((uint64_t)bv, cv, 1); break;
       case BC_BSAR: bv >>= (cv & 63); break;
       default:
 	lj_assertL(0, "bad bytecode op %d", op);

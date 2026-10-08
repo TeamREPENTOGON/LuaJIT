@@ -58,23 +58,50 @@ static int rec_cdata_is_bs(jit_State *J, cTValue *tv)
   return lj_cdata_bs_match(ctype_cts(J->L), cdataV(tv));
 }
 
-static TRef rec_bitop_tou32(jit_State *J, TRef tr, cTValue *tv)
+#define REC_BITOP_INT	1
+#define REC_BITOP_U32	2
+
+static int rec_bitop_range(cTValue *tv)
+{
+  lua_Number v;
+  if (tvisint(tv)) return REC_BITOP_INT;
+  if (!tvisnum(tv)) return 0;
+  v = numV(tv);
+  if (v >= -2147483648.0 && v <= 2147483647.0 && v == (lua_Number)(int32_t)v)
+    return REC_BITOP_INT;
+  if (v >= 2147483648.0 && v <= 4294967295.0 && v == (lua_Number)(uint32_t)v)
+    return REC_BITOP_U32;
+  return 0;
+}
+
+static lua_Number rec_bitop_num(cTValue *tv)
+{
+  return tvisint(tv) ? (lua_Number)intV(tv) : numV(tv);
+}
+
+static TRef rec_bitop_toint(jit_State *J, TRef tr)
 {
   if (tref_isinteger(tr))
     return tr;
-  if (tv && tvisnum(tv)) {
-    lua_Number v = numV(tv);
-    if (v >= -2147483648.0 && v < 4294967296.0 &&
-	v == (lua_Number)(int64_t)v)
-      return lj_opt_narrow_tobit(J, tr);
+  return emitir(IRTGI(IR_CONV), tr, IRCONV_INT_NUM|IRCONV_CHECK);
+}
+
+static TRef rec_bitop_tou32(jit_State *J, TRef tr)
+{
+  TRef bits;
+  if (tref_isinteger(tr)) {
+    emitir(IRTGI(IR_GE), tr, lj_ir_kint(J, 0));
+    return tr;
   }
-  if (tref_isnum(tr)) {
-    emitir(IRTG(IR_GE, IRT_NUM), tr, lj_ir_knum(J, -2147483648.0));
-    emitir(IRTG(IR_LT, IRT_NUM), tr, lj_ir_knum(J, 4294967296.0));
-    return lj_opt_narrow_tobit(J, tr);
-  }
-  lj_trace_err(J, LJ_TRERR_NYIBC);
-  return 0;
+  bits = lj_opt_narrow_tobit(J, tr);
+  emitir(IRTG(IR_EQ, IRT_NUM),
+	 emitir(IRTN(IR_CONV), bits, (IRT_NUM<<IRCONV_DSH)|IRT_U32), tr);
+  return bits;
+}
+
+static TRef rec_bitop_fromu32(jit_State *J, TRef tr)
+{
+  return emitir(IRTN(IR_CONV), tr, (IRT_NUM<<IRCONV_DSH)|IRT_U32);
 }
 
 static void rec_cdata_ctype_guard(jit_State *J, TRef tr, GCcdata *cd)
@@ -2940,11 +2967,19 @@ void lj_record_ins(jit_State *J)
       goto recbit;
     if ((tref_isnum(rb) || tref_isinteger(rb)) && tref_isnum(rc) ||
 	(tref_isnum(rb) && (tref_isnum(rc) || tref_isinteger(rc)))) {
-      TRef rbn = rec_bitop_tou32(J, rb, rbv);
-      TRef rcn = rec_bitop_tou32(J, rc, rcv);
-      rc = emitir(IRTI((int)op - (int)BC_BAND + (int)IR_BAND), rbn, rcn);
-      rc = emitir(IRT(IR_CONV, IRT_NUM), rc,
-		  (IRT_U32 << IRCONV_DSH) | IRT_U32);
+      int kb = rec_bitop_range(rbv), kc = rec_bitop_range(rcv);
+      IROp irop = (IROp)((int)op - (int)BC_BAND + (int)IR_BAND);
+      if (kb == REC_BITOP_INT && kc == REC_BITOP_INT) {
+	rc = emitir(IRTI(irop), rec_bitop_toint(J, rb), rec_bitop_toint(J, rc));
+      } else if (kb && kc && (rec_bitop_num(rbv) >= 0 || op == BC_BAND) &&
+		 (rec_bitop_num(rcv) >= 0 || op == BC_BAND) &&
+		 (rec_bitop_num(rbv) >= 0 || rec_bitop_num(rcv) >= 0)) {
+	TRef b32 = rec_bitop_num(rbv) >= 0 ? rec_bitop_tou32(J, rb) : rec_bitop_toint(J, rb);
+	TRef c32 = rec_bitop_num(rcv) >= 0 ? rec_bitop_tou32(J, rc) : rec_bitop_toint(J, rc);
+	rc = rec_bitop_fromu32(J, emitir(IRTI(irop), b32, c32));
+      } else {
+	lj_trace_err(J, LJ_TRERR_NYIBC);
+      }
       if (op == BC_BAND && rcv && (tvisint(rcv) || tvisnum(rcv))) {
 	int32_t m = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
 	if (m >= 0 && m <= 31 && (tvisint(rcv) || numV(rcv) == (double)m))
@@ -2955,10 +2990,8 @@ void lj_record_ins(jit_State *J)
     if (tref_isinteger(rb) && op == BC_BAND && rcv && tref_isk(rc) &&
 	(tvisint(rcv) ||
 	 (tvisnum(rcv) &&
-	  ((numV(rcv) >= 0.0 && numV(rcv) <= 4294967295.0 &&
-	    numV(rcv) == (double)(uint32_t)numV(rcv)) ||
-	   (numV(rcv) >= -2147483648.0 && numV(rcv) < 0.0 &&
-	    numV(rcv) == (double)(int32_t)numV(rcv)))))) {
+	  numV(rcv) >= -2147483648.0 && numV(rcv) <= 2147483647.0 &&
+	  numV(rcv) == (double)(int32_t)numV(rcv)))) {
       rc = lj_opt_narrow_tobit(J, rc);
       goto recbit;
     }
@@ -2980,25 +3013,32 @@ void lj_record_ins(jit_State *J)
 	int32_t k = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
 	safe = k >= 0 && k <= 31 && (tvisint(rcv) || numV(rcv) == (double)k);
       }
-      if (tref_isnum(rb)) {
-	TRef rbn, ts;
-	if (!safe)
+      if (safe && tref_isnumber(rb)) {
+	int kx = rec_bitop_range(rbv);
+	lua_Number xv = rec_bitop_num(rbv);
+	int32_t k = (int32_t)rec_bitop_num(rcv) & 31;
+	TRef x, tsh = lj_opt_narrow_tobit(J, rc);
+	if (op == BC_BSAR) {
+	  if (kx != REC_BITOP_INT)
+	    lj_trace_err(J, LJ_TRERR_NYIBC);
+	  rc = emitir(IRTI(IR_BSAR), rec_bitop_toint(J, rb), tsh);
+	} else if (op == BC_BSHR) {
+	  if (!kx || xv < 0)
+	    lj_trace_err(J, LJ_TRERR_NYIBC);
+	  rc = emitir(IRTI(IR_BSHR), rec_bitop_tou32(J, rb), tsh);
+	  rc = rec_bitop_fromu32(J, rc);
+	} else if (kx == REC_BITOP_INT &&
+		   (int32_t)((uint32_t)(int32_t)xv << k) >> k == (int32_t)xv) {
+	  x = rec_bitop_toint(J, rb);
+	  rc = emitir(IRTI(IR_BSHL), x, tsh);
+	  emitir(IRTGI(IR_EQ), emitir(IRTI(IR_BSAR), rc, tsh), x);
+	} else if (kx && xv >= 0 && ((uint64_t)xv << k) <= 0xffffffffu) {
+	  x = rec_bitop_tou32(J, rb);
+	  rc = emitir(IRTI(IR_BSHL), x, tsh);
+	  emitir(IRTGI(IR_EQ), emitir(IRTI(IR_BSHR), rc, tsh), x);
+	  rc = rec_bitop_fromu32(J, rc);
+	} else {
 	  lj_trace_err(J, LJ_TRERR_NYIBC);
-	rbn = rec_bitop_tou32(J, rb, rbv);
-	ts = rec_bitop_tou32(J, rc, rcv);
-	ts = emitir(IRTI(IR_BAND), ts, lj_ir_kint(J, 31));
-	rc = emitir(IRTI((int)op - (int)BC_BSHL + (int)IR_BSHL), rbn, ts);
-	rc = emitir(IRT(IR_CONV, IRT_NUM), rc,
-		    (IRT_U32 << IRCONV_DSH) | IRT_U32);
-	break;
-      }
-      if (tref_isinteger(rb)) {
-	if (!safe)
-	  lj_trace_err(J, LJ_TRERR_NYIBC);
-	TRef tsh = lj_opt_narrow_tobit(J, rc);
-	rc = emitir(IRTI((int)op - (int)BC_BSHL + (int)IR_BSHL), rb, tsh);
-	if (op == BC_BSHL) {
-	  rc = emitir(IRT(IR_CONV, IRT_NUM), rc, (IRT_U32 << IRCONV_DSH) | IRT_U32);
 	}
 	break;
       }

@@ -337,6 +337,13 @@ static LJ_AINLINE uint32_t lj_getu32(const void *v)
 #define LJ_UNLIKELY(x)	(x)
 #endif
 
+static LJ_AINLINE uint64_t lj_shift53(uint64_t x, int64_t n, int right)
+{
+  if (n <= -64 || n >= 64) return 0;
+  if (right) n = -n;
+  return n >= 0 ? x << n : x >> -n;
+}
+
 /* Attributes for internal functions. */
 #define LJ_DATA		LJ_NOAPI
 #define LJ_DATADEF
