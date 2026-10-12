@@ -1941,6 +1941,9 @@ static void asm_head_root(ASMState *as)
 static void asm_head_side(ASMState *as)
 {
   IRRef1 sloadins[RID_MAX];
+  IRRef1 spmove[LJ_MAX_JSLOTS+1];  /* Refs moved through the C stack. */
+  MSize nspmove = 0;
+  int32_t spmovewords = 0;
   RegSet allow = RSET_ALL;  /* Inverse of all coalesced registers. */
   RegSet live = RSET_EMPTY;  /* Live parent registers. */
   RegSet pallow = RSET_GPR;  /* Registers needed by the parent stack check. */
@@ -2016,8 +2019,15 @@ static void asm_head_side(ASMState *as)
 	else if (sps_scale(regsp_spill(rs))+spdelta == sps_scale(ir->s))
 	  continue;  /* Same spill slot, do nothing. */
 	mask = ((!LJ_SOFTFP && irt_isfp(ir->t)) ? RSET_FPR : RSET_GPR) & allow;
-	if (mask == RSET_EMPTY)
+	if (mask == RSET_EMPTY) {
+	  if (asm_head_side_spmove_ok(ir, rs)) {
+	    if (!ra_hasspill(regsp_spill(rs)))
+	      rset_clear(live, regsp_reg(rs));  /* Pushed before the shuffle. */
+	    spmove[nspmove++] = (IRRef1)i;
+	    continue;
+	  }
 	  lj_trace_err(as->J, LJ_TRERR_NYICOAL);
+	}
 	r = ra_allocref(as, i, mask);
 	ra_save(as, ir, r);
 	rset_clear(allow, r);
@@ -2032,9 +2042,15 @@ static void asm_head_side(ASMState *as)
     }
   }
 
+  if (nspmove)
+    spmovewords = asm_head_side_sppop(as, spmove, nspmove);
+
   /* Store trace number and adjust stack frame relative to the parent. */
   emit_setvmstate(as, (int32_t)as->T->traceno);
-  emit_spsub(as, spdelta);
+  if (nspmove)
+    spmovewords += spdelta/4;
+  else
+    emit_spsub(as, spdelta);
 
 #if !LJ_TARGET_X86ORX64
   /* Restore BASE register from parent spill slot. */
@@ -2051,7 +2067,7 @@ static void asm_head_side(ASMState *as)
       RegSP rs = as->parentmap[ref - REF_FIRST];
       rset_clear(work, r);
       if (ra_hasspill(regsp_spill(rs))) {
-	int32_t ofs = sps_scale(regsp_spill(rs));
+	int32_t ofs = sps_scale(regsp_spill(rs)) + 4*spmovewords;
 	ra_free(as, r);
 	emit_spload(as, IR(ref), r, ofs);
 	checkmclim(as);
@@ -2093,6 +2109,11 @@ static void asm_head_side(ASMState *as)
     }
     checkmclim(as);
     /* Continue with coalescing to fix up the broken cycle(s). */
+  }
+
+  if (nspmove) {
+    asm_head_side_sppush(as, spmove, nspmove, spmovewords, spdelta);
+    emit_spsub(as, spdelta);
   }
 
   /* Inherit top stack slot already checked by parent trace. */

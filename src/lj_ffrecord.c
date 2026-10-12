@@ -1759,6 +1759,13 @@ void lj_ffrecord_func(jit_State *J)
     return;
   }
 stock:
+  if (J->framedepth == 0 &&
+      (!frame_islua(J->L->base-1) ||
+       (J->parent == 0 && J->exitno == 0 &&
+	!bc_isret(bc_op(J->cur.startins))))) {
+    lj_record_stop(J, LJ_TRLINK_RETURN, 0);
+    return;
+  }
   RecordFFData rd;
   uint32_t m = recdef_lookup(J->fn);
   rd.data = m & 0xff;

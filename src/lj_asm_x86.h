@@ -2919,6 +2919,62 @@ static void asm_head_root_base(ASMState *as)
   }
 }
 
+static int asm_head_side_spmove_ok(IRIns *ir, RegSP rs)
+{
+  return ra_hasspill(regsp_spill(rs)) ||
+	 !rset_test(RSET_FPR, regsp_reg(rs)) || irt_is64(ir->t);
+}
+
+static int32_t asm_head_side_sppop(ASMState *as, IRRef1 *refs, MSize n)
+{
+  int32_t nw = 0;
+  MSize i;
+  for (i = 0; i < n; i++) {  /* Emitted backwards: the last push pops first. */
+    IRIns *ir = IR(refs[i]);
+    int32_t ofs = sps_scale(ir->s);
+    if (irt_is64(ir->t)) {
+      emit_rmro(as, XO_POPm, 0, RID_ESP, ofs+4 + 4*nw);
+      emit_rmro(as, XO_POPm, 0, RID_ESP, ofs + 4*(nw+1));
+      nw += 2;
+    } else {
+      emit_rmro(as, XO_POPm, 0, RID_ESP, ofs + 4*nw);
+      nw++;
+    }
+    checkmclim(as);
+  }
+  return nw;
+}
+
+static void asm_head_side_sppush(ASMState *as, IRRef1 *refs, MSize n,
+				 int32_t nw, int32_t spdelta)
+{
+  MSize i;
+  for (i = n; i-- > 0; ) {  /* Emitted backwards: the first ref pushes first. */
+    IRIns *ir = IR(refs[i]);
+    RegSP rs = as->parentmap[refs[i] - REF_FIRST];
+    if (ra_hasspill(regsp_spill(rs))) {
+      int32_t ofs = sps_scale(regsp_spill(rs));
+      if (irt_is64(ir->t)) {
+	nw -= 2;
+	emit_rmro(as, XO_GROUP5, XOg_PUSH, RID_ESP, ofs + 4*(nw+1));
+	emit_rmro(as, XO_GROUP5, XOg_PUSH, RID_ESP, ofs+4 + 4*nw);
+      } else {
+	nw--;
+	emit_rmro(as, XO_GROUP5, XOg_PUSH, RID_ESP, ofs + 4*nw);
+      }
+    } else if (rset_test(RSET_FPR, regsp_reg(rs))) {
+      nw -= 2;
+      emit_rmro(as, XO_MOVSDto, regsp_reg(rs), RID_ESP, 0);
+      emit_spsub(as, 8);
+    } else {
+      nw--;
+      *--as->mcp = (MCode)(XI_PUSH + regsp_reg(rs));
+    }
+    checkmclim(as);
+  }
+  lj_assertA(nw == spdelta/4, "bad word count for inherited values");
+}
+
 /* Coalesce or reload BASE register for a side trace. */
 static Reg asm_head_side_base(ASMState *as, IRIns *irp)
 {

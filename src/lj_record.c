@@ -104,6 +104,71 @@ static TRef rec_bitop_fromu32(jit_State *J, TRef tr)
   return emitir(IRTN(IR_CONV), tr, (IRT_NUM<<IRCONV_DSH)|IRT_U32);
 }
 
+static LJ_NORET void rec_bitop_nyi(jit_State *J, BCOp op)
+{
+  setintV(&J->errinfo, (int32_t)op);
+  lj_trace_err_info(J, LJ_TRERR_NYIBC);
+}
+
+#if LJ_HASFFI
+#define REC_BITOP_LIM	((int64_t)1 << 53)
+
+static int64_t rec_bitop_i64(cTValue *tv)
+{
+  return tvisint(tv) ? (int64_t)intV(tv) : lj_num2i64(numV(tv));
+}
+
+static TRef rec_bitop_toi64(jit_State *J, TRef tr)
+{
+  IROp o = (IROp)IR(tref_ref(tr))->o;
+  lj_needsplit(J);
+  if (tref_isinteger(tr))
+    return emitir(IRT(IR_CONV, IRT_I64), tr,
+		  (IRT_I64<<IRCONV_DSH)|IRT_INT|IRCONV_SEXT);
+  /* Don't narrow FP arithmetic to int64_t: it rounds differently >= 2^53. */
+  if (o == IR_ADD || o == IR_SUB)
+    return emitir_raw(IRT(IR_CONV, IRT_I64), tr,
+		      (IRT_I64<<IRCONV_DSH)|IRT_NUM|IRCONV_ANY);
+  return emitir(IRT(IR_CONV, IRT_I64), tr,
+		(IRT_I64<<IRCONV_DSH)|IRT_NUM|IRCONV_ANY);
+}
+
+static TRef rec_bitop_fromi64(jit_State *J, TRef tr, int64_t v)
+{
+  TRef lim = lj_ir_kint64(J, (uint64_t)(2*REC_BITOP_LIM));
+  TRef biased = emitir(IRT(IR_ADD, IRT_I64), tr,
+		       lj_ir_kint64(J, (uint64_t)REC_BITOP_LIM));
+  if (v >= -REC_BITOP_LIM && v <= REC_BITOP_LIM) {
+    emitir(IRTG(IR_ULE, IRT_U64), biased, lim);
+    return emitir(IRTN(IR_CONV), tr, (IRT_NUM<<IRCONV_DSH)|IRT_I64);
+  }
+  emitir(IRTG(IR_UGT, IRT_U64), biased, lim);
+  return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, CTID_INT64), tr);
+}
+
+static TRef rec_bitop_shift64(jit_State *J, TRef rb, TRef rc,
+			      cTValue *rbv, cTValue *rcv, BCOp op)
+{
+  lua_Number n;
+  TRef tsh;
+  if (op == BC_BSAR || !tref_isnumber(rb) || !tref_isnumber(rc))
+    rec_bitop_nyi(J, op);
+  n = rec_bitop_num(rcv);
+  if (!(n >= 0 && n <= 63 && n == (lua_Number)(int32_t)n))
+    rec_bitop_nyi(J, op);  /* NYI: reversed, oversized or fractional shifts. */
+  tsh = rec_bitop_toint(J, rc);
+  if (!tref_isk(tsh))
+    emitir(IRTGI(IR_ULE), tsh, lj_ir_kint(J, 63));
+  rb = emitir(IRT(op == BC_BSHL ? IR_BSHL : IR_BSHR, IRT_I64),
+	      rec_bitop_toi64(J, rb), tsh);
+  return rec_bitop_fromi64(J, rb,
+    (int64_t)lj_shift53((uint64_t)rec_bitop_i64(rbv), (int64_t)n,
+			op == BC_BSHR));
+}
+#else
+#define rec_bitop_shift64(J, rb, rc, rbv, rcv, op)	(rec_bitop_nyi(J, op), 0)
+#endif
+
 static void rec_cdata_ctype_guard(jit_State *J, TRef tr, GCcdata *cd)
 {
   TRef trid = emitir(IRT(IR_FLOAD, IRT_U16), tr, IRFL_CDATA_CTYPEID);
@@ -952,6 +1017,10 @@ static LoopEvent rec_loop(jit_State *J, BCReg ra, int skip)
 static int innerloopleft(jit_State *J, const BCIns *pc)
 {
   ptrdiff_t i;
+  BCOp op = bc_op(*pc);
+  /* A blacklisted loop never gets its own trace, so unroll it. */
+  if (op == BC_IFORL || op == BC_IITERL || op == BC_ILOOP)
+    return 1;
   for (i = 0; i < PENALTY_SLOTS; i++)
     if (mref(J->penalty[i].pc, const BCIns) == pc) {
       if ((J->penalty[i].reason == LJ_TRERR_LLEAVE ||
@@ -1127,6 +1196,18 @@ static void rec_profile_ret(jit_State *J)
 
 #endif
 
+#define REC_NYI_MINROOT		16
+
+static void rec_stop_nyi(jit_State *J, BCOp op)
+{
+  if (J->parent == 0 && J->exitno == 0 &&
+      J->cur.nins < REF_FIRST + REC_NYI_MINROOT) {
+    setintV(&J->errinfo, (int32_t)op);
+    lj_trace_err_info(J, LJ_TRERR_NYIBC);
+  }
+  lj_record_stop(J, LJ_TRLINK_RETURN, 0);
+}
+
 /* -- Record calls and returns -------------------------------------------- */
 
 /* Specialize to the runtime value of the called function or its prototype. */
@@ -1293,6 +1374,18 @@ void lj_record_ret(jit_State *J, BCReg rbase, ptrdiff_t gotresults)
 	(J->parent == 0 && J->exitno == 0 &&
 	 !bc_isret(bc_op(J->cur.startins))))) {
     /* NYI: specialize to frame type and return directly, not via RET*. */
+    for (i = 0; i < (ptrdiff_t)rbase; i++)
+      J->base[i] = 0;  /* Purge dead slots. */
+    J->maxslot = rbase + (BCReg)gotresults;
+    lj_record_stop(J, LJ_TRLINK_RETURN, 0);  /* Return to interpreter. */
+    return;
+  }
+  /* Same for a vararg function that was tail-called from the start frame. */
+  if (J->framedepth == 1 && J->pt && bc_isret(bc_op(*J->pc)) &&
+      frame_isvarg(frame) &&
+      (!frame_islua(frame_prevd(frame)) ||
+       (J->parent == 0 && J->exitno == 0 &&
+	!bc_isret(bc_op(J->cur.startins))))) {
     for (i = 0; i < (ptrdiff_t)rbase; i++)
       J->base[i] = 0;  /* Purge dead slots. */
     J->maxslot = rbase + (BCReg)gotresults;
@@ -2986,8 +3079,16 @@ void lj_record_ins(jit_State *J)
     if (tref_isnumber_str(rc)) {
       if (tref_isinteger(rc))
 	rc = emitir(IRTI(IR_BNOT), rc, 0);
+      else if (tref_isnum(rc) && rec_bitop_range(rcv) == REC_BITOP_INT)
+	rc = emitir(IRTI(IR_BNOT), rec_bitop_toint(J, rc), 0);
+#if LJ_HASFFI
+      else if (tref_isnum(rc))
+	rc = rec_bitop_fromi64(J,
+	       emitir(IRT(IR_BNOT, IRT_I64), rec_bitop_toi64(J, rc), 0),
+	       ~rec_bitop_i64(rcv));
+#endif
       else
-	lj_trace_err(J, LJ_TRERR_NYIBC);
+	rec_bitop_nyi(J, op);
     } else {
       ix.tab = rc;
       copyTV(J->L, &ix.tabv, rcv);
@@ -3039,7 +3140,16 @@ void lj_record_ins(jit_State *J)
 	TRef c32 = rec_bitop_num(rcv) >= 0 ? rec_bitop_tou32(J, rc) : rec_bitop_toint(J, rc);
 	rc = rec_bitop_fromu32(J, emitir(IRTI(irop), b32, c32));
       } else {
-	lj_trace_err(J, LJ_TRERR_NYIBC);
+#if LJ_HASFFI
+	int64_t bv = rec_bitop_i64(rbv), cv = rec_bitop_i64(rcv);
+	rc = emitir(IRT(irop, IRT_I64), rec_bitop_toi64(J, rb),
+		    rec_bitop_toi64(J, rc));
+	rc = rec_bitop_fromi64(J, rc, op == BC_BAND ? (bv & cv) :
+				      op == BC_BOR ? (bv | cv) : (bv ^ cv));
+	break;
+#else
+	rec_bitop_nyi(J, op);
+#endif
       }
       if (op == BC_BAND && rcv && (tvisint(rcv) || tvisnum(rcv))) {
 	int32_t m = tvisint(rcv) ? (int32_t)intV(rcv) : (int32_t)numV(rcv);
@@ -3056,7 +3166,7 @@ void lj_record_ins(jit_State *J)
       rc = lj_opt_narrow_tobit(J, rc);
       goto recbit;
     }
-    lj_trace_err(J, LJ_TRERR_NYIBC);
+    rec_bitop_nyi(J, op);
     break;
   recbit:
     rc = emitir(IRTI((int)op - (int)BC_BAND + (int)IR_BAND), rb, rc);
@@ -3081,13 +3191,13 @@ void lj_record_ins(jit_State *J)
 	TRef x, tsh = lj_opt_narrow_tobit(J, rc);
 	if (op == BC_BSAR) {
 	  if (kx != REC_BITOP_INT)
-	    lj_trace_err(J, LJ_TRERR_NYIBC);
+	    rec_bitop_nyi(J, op);
 	  rc = emitir(IRTI(IR_BSAR), rec_bitop_toint(J, rb), tsh);
-	} else if (op == BC_BSHR) {
-	  if (!kx || xv < 0)
-	    lj_trace_err(J, LJ_TRERR_NYIBC);
+	} else if (op == BC_BSHR && kx && xv >= 0) {
 	  rc = emitir(IRTI(IR_BSHR), rec_bitop_tou32(J, rb), tsh);
 	  rc = rec_bitop_fromu32(J, rc);
+	} else if (op == BC_BSHR) {
+	  rc = rec_bitop_shift64(J, rb, rc, rbv, rcv, op);
 	} else if (kx == REC_BITOP_INT &&
 		   (int32_t)((uint32_t)(int32_t)xv << k) >> k == (int32_t)xv) {
 	  x = rec_bitop_toint(J, rb);
@@ -3099,11 +3209,11 @@ void lj_record_ins(jit_State *J)
 	  emitir(IRTGI(IR_EQ), emitir(IRTI(IR_BSHR), rc, tsh), x);
 	  rc = rec_bitop_fromu32(J, rc);
 	} else {
-	  lj_trace_err(J, LJ_TRERR_NYIBC);
+	  rc = rec_bitop_shift64(J, rb, rc, rbv, rcv, op);
 	}
 	break;
       }
-      lj_trace_err(J, LJ_TRERR_NYIBC);
+      rc = rec_bitop_shift64(J, rb, rc, rbv, rcv, op);
     }
     break;
 
@@ -3256,15 +3366,18 @@ void lj_record_ins(jit_State *J)
     break;
 
   case BC_FORL:
+  case BC_IFORL:
     rec_loop_interp(J, pc, rec_for(J, pc+((ptrdiff_t)rc-BCBIAS_J), 1));
     break;
   case BC_ITERL:
+  case BC_IITERL:
     rec_loop_interp(J, pc, rec_iterl(J, *pc));
     break;
   case BC_ITERN:
     rec_loop_interp(J, pc, rec_itern(J, ra, rb));
     break;
   case BC_LOOP:
+  case BC_ILOOP:
     rec_loop_interp(J, pc, rec_loop(J, ra, 1));
     break;
 
@@ -3280,14 +3393,13 @@ void lj_record_ins(jit_State *J)
 				 bc_op(traceref(J, rc)->startins) != BC_ITERN));
     break;
 
-  case BC_IFORL:
-  case BC_IITERL:
-  case BC_ILOOP:
-  case BC_IFUNCF:
-  case BC_IFUNCV:
-    lj_trace_err(J, LJ_TRERR_BLACKL);
-    break;
-
+  case BC_UCLO:
+    if (!(J->framedepth > 0 ||
+	  (J->parent == 0 && J->exitno == 0 && J->retdepth == 0 &&
+	   bc_op(J->cur.startins) == BC_FUNCF))) {
+      rec_stop_nyi(J, op);
+      return;
+    }
   case BC_JMP:
     if (ra < J->maxslot)
       J->maxslot = ra;  /* Shrink used slots. */
@@ -3300,6 +3412,7 @@ void lj_record_ins(jit_State *J)
   /* -- Function headers -------------------------------------------------- */
 
   case BC_FUNCF:
+  case BC_IFUNCF:
     rec_func_lua(J);
     break;
   case BC_JFUNCF:
@@ -3307,6 +3420,7 @@ void lj_record_ins(jit_State *J)
     break;
 
   case BC_FUNCV:
+  case BC_IFUNCV:
     rec_func_vararg(J);
     rec_func_lua(J);
     break;
@@ -3326,11 +3440,13 @@ void lj_record_ins(jit_State *J)
       break;
     }
     /* fallthrough */
-  case BC_UCLO:
-  case BC_FNEW:
     setintV(&J->errinfo, (int32_t)op);
     lj_trace_err_info(J, LJ_TRERR_NYIBC);
     break;
+
+  case BC_FNEW:
+    rec_stop_nyi(J, op);
+    return;
   }
 
   /* rc == 0 if we have no result yet, e.g. pending __index metamethod call. */

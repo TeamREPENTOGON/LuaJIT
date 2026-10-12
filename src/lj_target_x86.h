@@ -271,6 +271,7 @@ typedef enum {
   XO_GROUP3 =	XO_(f7),
   XO_GROUP5b =	XO_(fe),
   XO_GROUP5 =	XO_(ff),
+  XO_POPm =	XO_(8f),
   XO_MOVZXb =	XO_0f(b6),
   XO_MOVZXw =	XO_0f(b7),
   XO_MOVSXb =	XO_0f(be),
