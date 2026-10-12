@@ -35,6 +35,7 @@
 #include "lj_snap.h"
 #include "lj_crecord.h"
 #include "lj_dispatch.h"
+#include "lj_vm.h"
 #include "lj_strfmt.h"
 #include "lj_strscan.h"
 
@@ -1308,26 +1309,36 @@ static TRef crec_call_args(jit_State *J, RecordFFData *rd,
   return tr;
 }
 
+static TValue *crec_snap_add_cp(lua_State *L, lua_CFunction dummy, void *ud)
+{
+  lj_snap_add((jit_State *)ud);
+  UNUSED(L); UNUSED(dummy);
+  return NULL;
+}
+
 /* Create a snapshot for the caller, simulating the given return value. */
 static void crec_snap_caller_val(jit_State *J, TRef retval)
 {
   lua_State *L = J->L;
-  TValue *base = L->base, *top = L->top;
+  TValue *base = L->base;
   const BCIns *pc = J->pc;
   TRef ftr = J->base[-1-LJ_FR2];
   ptrdiff_t delta;
+  int errcode;
   if (!frame_islua(base-1) || J->framedepth <= 0)
     lj_trace_err(J, LJ_TRERR_NYICALL);
   J->pc = frame_pc(base-1); delta = 1+LJ_FR2+bc_a(J->pc[-1]);
-  L->top = base; L->base = base - delta;
+  L->base = base - delta;
   J->base[-1-LJ_FR2] = retval;
   J->base -= delta; J->baseslot -= (BCReg)delta;
   J->maxslot = (BCReg)delta-LJ_FR2; J->framedepth--;
-  lj_snap_add(J);
-  L->base = base; L->top = top;
+  errcode = lj_vm_cpcall(L, NULL, J, crec_snap_add_cp);
+  L->base = base;
   J->framedepth++; J->maxslot = 1;
   J->base += delta; J->baseslot += (BCReg)delta;
   J->base[-1-LJ_FR2] = ftr; J->pc = pc;
+  if (errcode)
+    lj_err_throw(L, errcode);
 }
 
 /* Create a snapshot for the caller, simulating a 'false' return value. */
