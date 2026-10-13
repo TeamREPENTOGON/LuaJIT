@@ -465,12 +465,30 @@ static TValue *recff_metacall_cp(lua_State *L, lua_CFunction dummy, void *ud)
   return NULL;
 }
 
+static int recff_metacall_lookup(jit_State *J, RecordIndex *ix, MMS mm)
+{
+#if LJ_HASFFI
+  if (tref_iscdata(ix->tab)) {
+    GCtab *mt = tabref(basemt_it(J2G(J), LJ_TCDATA));
+    cTValue *mo = mt ? lj_tab_getstr(mt, mmname_str(J2G(J), mm)) : NULL;
+    if (!mo || tvisnil(mo))
+      return 0;  /* No metamethod. */
+    if (!tvisfunc(mo))
+      lj_trace_err(J, LJ_TRERR_BADTYPE);
+    copyTV(J->L, &ix->mobjv, mo);
+    ix->mobj = lj_ir_kgc(J, gcV(mo), IRT_FUNC);
+    return 1;
+  }
+#endif
+  return lj_record_mm_lookup(J, ix, mm);
+}
+
 static int recff_metacall(jit_State *J, RecordFFData *rd, MMS mm)
 {
   RecordIndex ix;
   ix.tab = J->base[0];
   copyTV(J->L, &ix.tabv, &rd->argv[0]);
-  if (lj_record_mm_lookup(J, &ix, mm)) {  /* Has metamethod? */
+  if (recff_metacall_lookup(J, &ix, mm)) {  /* Has metamethod? */
     int errcode;
     TValue argv0;
     /* Temporarily insert metamethod below object. */
