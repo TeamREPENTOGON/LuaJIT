@@ -1725,28 +1725,8 @@ static void rec_mm_equal(jit_State *J, RecordIndex *ix, int op)
 {
   ix->tab = ix->val;
   copyTV(J->L, &ix->tabv, &ix->valv);
-  if (lj_record_mm_lookup(J, ix, MM_eq)) {  /* Lookup mm on 1st operand. */
-    cTValue *bv;
-    TRef mo1 = ix->mobj;
-    TValue mo1v;
-    copyTV(J->L, &mo1v, &ix->mobjv);
-    /* Avoid the 2nd lookup and the objcmp if the metatables are equal. */
-    bv = &ix->keyv;
-    if (tvistab(bv) && tabref(tabV(bv)->metatable) == ix->mtv) {
-      TRef mt2 = emitir(IRT(IR_FLOAD, IRT_TAB), ix->key, IRFL_TAB_META);
-      emitir(IRTG(IR_EQ, IRT_TAB), mt2, ix->mt);
-    } else if (tvisudata(bv) && tabref(udataV(bv)->metatable) == ix->mtv) {
-      TRef mt2 = emitir(IRT(IR_FLOAD, IRT_TAB), ix->key, IRFL_UDATA_META);
-      emitir(IRTG(IR_EQ, IRT_TAB), mt2, ix->mt);
-    } else {  /* Lookup metamethod on 2nd operand and compare both. */
-      ix->tab = ix->key;
-      copyTV(J->L, &ix->tabv, bv);
-      if (!lj_record_mm_lookup(J, ix, MM_eq) ||
-	  lj_record_objcmp(J, mo1, ix->mobj, &mo1v, &ix->mobjv))
-	return;
-    }
+  if (lj_record_mm_lookup(J, ix, MM_eq))  /* Lookup mm on 1st operand. */
     rec_mm_callcomp(J, ix, op);
-  }
 }
 
 /* Record call to ordered comparison metamethods (for arbitrary objects). */
