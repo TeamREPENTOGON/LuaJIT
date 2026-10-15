@@ -172,6 +172,18 @@ typedef LJ_ALIGN(8) struct CCallback {
   MSize slot;			/* Current callback slot. */
 } CCallback;
 
+/* Cache of struct field lookups by name. */
+#define CTFCACHE_SIZE	1024
+
+typedef struct CTFieldCache {
+  GCRef name;		/* Key string. */
+  uint32_t gen;		/* Valid while equal to CTState.fcgen. */
+  CTypeID1 sid;		/* Struct type (0 = empty). */
+  CTypeID1 fid;		/* Field type (0 = no such field). */
+  CTSize ofs;		/* Field offset. */
+  CTInfo qual;		/* Qualifiers collected from embedded structs. */
+} CTFieldCache;
+
 /* C type state. */
 typedef struct CTState {
   CType *tab;		/* C type table. */
@@ -182,6 +194,8 @@ typedef struct CTState {
   GCtab *miscmap;	/* Map of -CTypeID to metatable and cb slot to func. */
   CCallback cb;		/* Temporary callback state. */
   CTypeID1 hash[CTHASH_SIZE];  /* Hash anchors for C type table. */
+  CTFieldCache *fcache;	/* Field lookup cache (allocated on first use). */
+  uint32_t fcgen;	/* Field cache generation. */
 } CTState;
 
 #define CTINFO(ct, flags)	(((CTInfo)(ct) << CTSHIFT_NUM) + (flags))
@@ -470,6 +484,9 @@ LJ_FUNC CType *lj_ctype_getfieldq(CTState *cts, CType *ct, GCstr *name,
 				  CTSize *ofs, CTInfo *qual);
 #define lj_ctype_getfield(cts, ct, name, ofs) \
   lj_ctype_getfieldq((cts), (ct), (name), (ofs), NULL)
+LJ_FUNC CType *lj_ctype_getfieldc(CTState *cts, CType *ct, GCstr *name,
+				  CTSize *ofs, CTInfo *qual);
+LJ_FUNC void lj_ctype_fcflush(CTState *cts);
 LJ_FUNC CType *lj_ctype_rawref(CTState *cts, CTypeID id);
 LJ_FUNC CTSize lj_ctype_size(CTState *cts, CTypeID id);
 LJ_FUNC CTSize lj_ctype_vlsize(CTState *cts, CType *ct, CTSize nelem);

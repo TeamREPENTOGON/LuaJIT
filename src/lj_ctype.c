@@ -171,6 +171,7 @@ CTypeID lj_ctype_new(CTState *cts, CType **ctp)
 #endif
   }
   cts->top = id+1;
+  lj_ctype_fcflush(cts);
   *ctp = ct = &cts->tab[id];
   ct->info = 0;
   ct->size = 0;
@@ -278,6 +279,43 @@ CType *lj_ctype_getfieldq(CTState *cts, CType *ct, GCstr *name, CTSize *ofs,
     }
   }
   return NULL;  /* Not found. */
+}
+
+CType *lj_ctype_getfieldc(CTState *cts, CType *ct, GCstr *name, CTSize *ofs,
+			  CTInfo *qual)
+{
+  CTypeID sid = ctype_typeid(cts, ct);
+  CTFieldCache *fc = cts->fcache, *e;
+  CType *fct;
+  CTInfo q = 0;
+  if (LJ_UNLIKELY(!fc)) {
+    fc = lj_mem_newvec(cts->L, CTFCACHE_SIZE, CTFieldCache);
+    memset(fc, 0, CTFCACHE_SIZE*sizeof(CTFieldCache));
+    cts->fcache = fc;
+  }
+  e = &fc[((sid * 0x9e3779b1u) ^ (u32ptr(name) >> 4)) & (CTFCACHE_SIZE-1)];
+  if (e->gen == cts->fcgen && e->sid == sid && gcref(e->name) == obj2gco(name)) {
+    if (!e->fid) return NULL;
+    *ofs = e->ofs;
+    if (qual) *qual |= e->qual;
+    return ctype_get(cts, e->fid);
+  }
+  fct = lj_ctype_getfieldq(cts, ct, name, ofs, &q);
+  setgcref(e->name, obj2gco(name));
+  e->gen = cts->fcgen;
+  e->sid = (CTypeID1)sid;
+  e->fid = fct ? (CTypeID1)ctype_typeid(cts, fct) : 0;
+  e->ofs = fct ? *ofs : 0;
+  e->qual = q;
+  if (qual) *qual |= q;
+  return fct;
+}
+
+/* Invalidate all field cache entries. */
+void lj_ctype_fcflush(CTState *cts)
+{
+  if (LJ_UNLIKELY(++cts->fcgen == 0) && cts->fcache)
+    memset(cts->fcache, 0, CTFCACHE_SIZE*sizeof(CTFieldCache));
 }
 
 /* -- C type information -------------------------------------------------- */
@@ -699,6 +737,8 @@ void lj_ctype_freestate(global_State *g)
     lj_ccallback_mcode_free(cts);
     lj_mem_freevec(g, cts->tab, cts->sizetab, CType);
     lj_mem_freevec(g, cts->cb.cbid, cts->cb.sizeid, CTypeID1);
+    if (cts->fcache)
+      lj_mem_freevec(g, cts->fcache, CTFCACHE_SIZE, CTFieldCache);
     lj_mem_freet(g, cts);
   }
 }

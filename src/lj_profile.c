@@ -364,8 +364,10 @@ LUA_API void luaJIT_profile_stop(lua_State *L)
     g->hookmask &= ~HOOK_PROFILE;
     lj_dispatch_update(g, 0);
 #if LJ_HASJIT
-    G2J(g)->prof_mode = 0;
-    lj_trace_flushall(L);
+    if (G2J(g)->prof_mode) {
+      G2J(g)->prof_mode = 0;
+      lj_trace_flushall(L);
+    }
 #endif
     lj_buf_free(g, &ps->sb);
     ps->sb.w = ps->sb.e = NULL;

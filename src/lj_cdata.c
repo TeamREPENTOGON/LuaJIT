@@ -181,7 +181,7 @@ collect_attrib:
     GCstr *name = strV(key);
     if (ctype_isstruct(ct->info)) {
       CTSize ofs;
-      CType *fct = lj_ctype_getfieldq(cts, ct, name, &ofs, qual);
+      CType *fct = lj_ctype_getfieldc(cts, ct, name, &ofs, qual);
       if (fct) {
 	if (!allowprivate && ctype_isprivate(fct->info))
 	  lj_err_callerv(cts->L, LJ_ERR_FFI_PRIVATE, strdata(name));

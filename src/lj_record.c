@@ -1585,8 +1585,14 @@ int lj_record_mm_lookup(jit_State *J, RecordIndex *ix, MMS mm)
       if (!mo || tvisnil(mo))
 	return 0;  /* No metamethod. */
       /* Treat metamethod or index table as immutable, too. */
-      if (!(tvisfunc(mo) || tvistab(mo)))
+      if (!(tvisfunc(mo) || tvistab(mo))) {
+	if (mm == MM_metatable && tvisstr(mo)) {
+	  copyTV(J->L, &ix->mobjv, mo);
+	  ix->mobj = lj_ir_kstr(J, strV(mo));
+	  return 1;
+	}
 	lj_trace_err(J, LJ_TRERR_BADTYPE);
+      }
       copyTV(J->L, &ix->mobjv, mo);
       ix->mobj = lj_ir_kgc(J, gcV(mo), tvisfunc(mo) ? IRT_FUNC : IRT_TAB);
       return 1;  /* Got metamethod or index table. */
