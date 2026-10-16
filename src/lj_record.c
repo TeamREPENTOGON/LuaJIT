@@ -2025,6 +2025,7 @@ TRef lj_record_idx(jit_State *J, RecordIndex *ix)
 	  return tr;
 	}
       } else if (rec_cdata_field_set(J, ix, 0)) {
+	J->needsnap = 1;
 	if (J->postproc == LJ_POST_NONE) J->postproc = LJ_POST_FFRETRY;
 	return 0;
       }
