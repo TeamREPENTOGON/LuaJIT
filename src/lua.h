@@ -119,6 +119,8 @@ LUA_API lua_CFunction (lua_atpanic) (lua_State *L, lua_CFunction panicf);
 
 LUA_API void (luaJIT_setapifatal) (void (*f)(const char *msg));
 LUA_API void (luaJIT_setudnofin) (const void *vtable);
+LUA_API void (luaJIT_setgcframebudget) (lua_State *L, double ms);
+LUA_API void (luaJIT_gcframe) (lua_State *L);
 
 
 /*

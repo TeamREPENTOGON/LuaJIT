@@ -52,6 +52,67 @@ LUA_API void luaJIT_setudnofin(const void *vtable)
   }
 }
 
+#if defined(_MSC_VER) && (LJ_TARGET_X86 || LJ_TARGET_X64) && LJ_TARGET_WINDOWS
+#define GC_FRAMEBUDGET	1
+#include <intrin.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+#define GC_FRAMECEIL_MIN	((GCSize)64 << 20)
+
+static uint64_t gc_frame_budget;
+static uint64_t gc_frame_used;
+static uint64_t gc_frame_maxcall;
+static int gc_frame_bypass;
+
+LUA_API void luaJIT_setgcframebudget(lua_State *L, double ms)
+{
+  static double ticks_per_ms;
+  UNUSED(L);
+  if (ticks_per_ms == 0 && ms > 0) {
+    LARGE_INTEGER f, c0, c1;
+    uint64_t r0, r1;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c0);
+    r0 = __rdtsc();
+    do { QueryPerformanceCounter(&c1); }
+    while ((c1.QuadPart - c0.QuadPart) * 1000 < f.QuadPart * 20);
+    r1 = __rdtsc();
+    ticks_per_ms = (double)(r1 - r0) /
+		   ((double)(c1.QuadPart - c0.QuadPart) * 1000.0 / (double)f.QuadPart);
+  }
+  gc_frame_budget = ms > 0 ? (uint64_t)(ms * ticks_per_ms) : 0;
+  gc_frame_maxcall = (uint64_t)(100.0 * ticks_per_ms);
+  gc_frame_used = 0;
+}
+
+LUA_API void luaJIT_gcframe(lua_State *L)
+{
+  UNUSED(L);
+  gc_frame_used = 0;
+}
+
+static GCSize gc_frame_ceiling(global_State *g)
+{
+  GCSize start = (g->gc.estimate / 100) * g->gc.pause;
+  GCSize margin = g->gc.estimate / 4;
+  if (margin < GC_FRAMECEIL_MIN) margin = GC_FRAMECEIL_MIN;
+  return start + margin < start ? LJ_MAX_MEM : start + margin;
+}
+#else
+LUA_API void luaJIT_setgcframebudget(lua_State *L, double ms)
+{
+  UNUSED(L); UNUSED(ms);
+}
+
+LUA_API void luaJIT_gcframe(lua_State *L)
+{
+  UNUSED(L);
+}
+#endif
+
 static int gc_udtrivialfin(GCudata *ud)
 {
   if (ud->udtype == UDTYPE_USERDATA && ud->len >= sizeof(void *)) {
@@ -851,25 +912,50 @@ static size_t gc_onestep(lua_State *L)
 }
 
 /* Perform a limited amount of incremental GC steps. */
+#ifdef GC_FRAMEBUDGET
+#define gc_frame_account(t0) \
+  if (gc_frame_budget) { \
+    uint64_t dt = __rdtsc() - (t0); \
+    if (dt < gc_frame_maxcall) gc_frame_used += dt; \
+  }
+#else
+#define gc_frame_account(t0)	UNUSED(t0)
+#endif
+
 int LJ_FASTCALL lj_gc_step(lua_State *L)
 {
   global_State *g = G(L);
   GCSize lim;
   int32_t ostate = g->vmstate;
+  uint64_t t0 = 0;
   setvmstate(g, GC);
   lim = (GCSTEPSIZE/100) * g->gc.stepmul;
   if (lim == 0)
     lim = LJ_MAX_MEM;
   if (g->gc.total > g->gc.threshold)
     g->gc.debt += g->gc.total - g->gc.threshold;
+#ifdef GC_FRAMEBUDGET
+  if (gc_frame_budget) {
+    /* Frame budget used up: defer this step as debt, unless past the ceiling. */
+    if (!gc_frame_bypass && gc_frame_used >= gc_frame_budget &&
+	g->gc.total < gc_frame_ceiling(g)) {
+      g->gc.threshold = g->gc.total + GCSTEPSIZE;
+      g->vmstate = ostate;
+      return -1;
+    }
+    t0 = __rdtsc();
+  }
+#endif
   do {
     lim -= (GCSize)gc_onestep(L);
     if (g->gc.state == GCSpause) {
       g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
       g->vmstate = ostate;
+      gc_frame_account(t0);
       return 1;  /* Finished a GC cycle. */
     }
   } while (sizeof(lim) == 8 ? ((int64_t)lim > 0) : ((int32_t)lim > 0));
+  gc_frame_account(t0);
   if (g->gc.debt < GCSTEPSIZE) {
     g->gc.threshold = g->gc.total + GCSTEPSIZE;
     g->vmstate = ostate;
@@ -880,6 +966,19 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
     g->vmstate = ostate;
     return 0;
   }
+}
+
+int lj_gc_step_explicit(lua_State *L)
+{
+  int r;
+#ifdef GC_FRAMEBUDGET
+  gc_frame_bypass = 1;
+#endif
+  r = lj_gc_step(L);
+#ifdef GC_FRAMEBUDGET
+  gc_frame_bypass = 0;
+#endif
+  return r;
 }
 
 /* Ditto, but fix the stack top first. */

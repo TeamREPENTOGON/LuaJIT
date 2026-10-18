@@ -60,6 +60,7 @@ LJ_FUNCA void LJ_FASTCALL lj_gc_step_fixtop(lua_State *L);
 #if LJ_HASJIT
 LJ_FUNC int LJ_FASTCALL lj_gc_step_jit(global_State *g, MSize steps);
 #endif
+LJ_FUNC int lj_gc_step_explicit(lua_State *L);
 LJ_FUNC void lj_gc_fullgc(lua_State *L);
 LJ_FUNC void lj_gc_udatamt(global_State *g, GCudata *ud, GCtab *mt);
 
