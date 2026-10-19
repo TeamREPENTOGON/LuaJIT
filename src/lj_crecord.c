@@ -648,7 +648,12 @@ static TRef crec_ct_tv(jit_State *J, CType *d, TRef dp, TRef sp, cTValue *sval)
     sp = lj_ir_kint(J, tref_istrue(sp) ? 1 : 0);
     sid = CTID_BOOL;
   } else if (tref_isnil(sp)) {
-    sp = lj_ir_kptr(J, NULL);
+    if (ctype_isbool(d->info)) {
+      sp = lj_ir_kint(J, 0);
+      sid = CTID_BOOL;
+    } else {
+      sp = lj_ir_kptr(J, NULL);
+    }
   } else if (tref_isudata(sp)) {
     GCudata *ud = udataV(sval);
     if (ud->udtype == UDTYPE_IO_FILE || ud->udtype == UDTYPE_BUFFER) {

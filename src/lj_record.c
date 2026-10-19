@@ -362,7 +362,7 @@ fct = rec_cdata_field_resolve(J, ix, &base, &ofs, &fused, allowprivate);
     return 1;
   }
   if ((fct->info & CTF_BOOL)) {
-    if (tref_isbool(val)) {
+    if (tref_isbool(val) || tref_isnil(val)) {
       emitir(IRT(IR_XSTORE, IRT_U8), dpr,
 	     lj_ir_kint(J, tref_istrue(val) ? 1 : 0));
       return 1;

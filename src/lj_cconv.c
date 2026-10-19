@@ -626,8 +626,14 @@ void lj_cconv_ct_tv(CTState *cts, CType *d,
     sp = &tmpbool;
     sid = CTID_BOOL;
   } else if (tvisnil(o)) {
-    tmpptr = (void *)0;
-    flags |= CCF_FROMTV;
+    if (ctype_isbool(d->info)) {
+      tmpbool = 0;
+      sp = &tmpbool;
+      sid = CTID_BOOL;
+    } else {
+      tmpptr = (void *)0;
+      flags |= CCF_FROMTV;
+    }
   } else if (tvisudata(o)) {
     GCudata *ud = udataV(o);
     tmpptr = uddata(ud);
