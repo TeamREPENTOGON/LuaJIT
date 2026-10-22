@@ -3381,6 +3381,14 @@ void lj_record_ins(jit_State *J)
     break;
 
   case BC_UCLO:
+    {
+      BCOp mop = bc_op(pc[1+bc_j(ins)]);
+      if (mop == BC_CALLM || mop == BC_CALLMT ||
+	  mop == BC_RETM || mop == BC_TSETM) {
+	setintV(&J->errinfo, (int32_t)op);
+	lj_trace_err_info(J, LJ_TRERR_NYIBC);
+      }
+    }
     if (!(J->framedepth > 0 ||
 	  (J->parent == 0 && J->exitno == 0 && J->retdepth == 0 &&
 	   bc_op(J->cur.startins) == BC_FUNCF))) {
