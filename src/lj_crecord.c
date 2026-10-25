@@ -218,6 +218,7 @@ static void crec_copy_emit(jit_State *J, CRecMemList *ml, MSize mlp,
   for (i = 0, j = 0; i < mlp; ) {
     TRef trofs = lj_ir_kintp(J, ml[i].ofs);
     TRef trsptr = emitir(IRT(IR_ADD, IRT_PTR), trsrc, trofs);
+    if (ml[i].tp == IRT_I64 || ml[i].tp == IRT_U64) lj_needsplit(J);
     ml[i].trval = emitir(IRT(IR_XLOAD, ml[i].tp), trsptr, 0);
     ml[i].trofs = trofs;
     i++;
