@@ -840,7 +840,7 @@ static void crec_index_bf(jit_State *J, RecordFFData *rd, TRef ptr, CTInfo info)
   }
 }
 
-void LJ_FASTCALL recff_cdata_index(jit_State *J, RecordFFData *rd)
+static void crec_index(jit_State *J, RecordFFData *rd, int allowprivate)
 {
   TRef idx, ptr = J->base[0];
   ptrdiff_t ofs = sizeof(GCcdata);
@@ -871,7 +871,8 @@ again:
     else if (tvisnum(&rd->argv[1])) rtidx = (ptrdiff_t)numV(&rd->argv[1]);
     else rtok = 0;
     idx = lj_opt_narrow_cindex(J, idx);
-    if (ctype_ispointer(ct->info)) {
+    if (ctype_ispointer(ct->info) &&
+	(allowprivate || !lj_ctype_ptrmeta(cts, ct, MM_index))) {
       CTSize sz;
   integer_key:
       if ((ct->info & CTF_COMPLEX))
@@ -901,7 +902,8 @@ again:
     if (ctk->size == 4) rtidx = (ptrdiff_t)*(int32_t *)cdataptr(cdk);
     else if (ctk->size == 8) rtidx = (ptrdiff_t)*(int64_t *)cdataptr(cdk);
     else rtok = 0;
-    if (ctype_ispointer(ct->info) && t >= IRT_I8 && t <= IRT_U64) {
+    if (ctype_ispointer(ct->info) && t >= IRT_I8 && t <= IRT_U64 &&
+	(allowprivate || !lj_ctype_ptrmeta(cts, ct, MM_index))) {
       if (ctk->size == 8) {
 	idx = emitir(IRT(IR_FLOAD, t), idx, IRFL_CDATA_INT64);
       } else if (ctk->size == 4) {
@@ -1005,6 +1007,11 @@ again:
     J->needsnap = 1;
     crec_ct_tv(J, ct, ptr, J->base[2], &rd->argv[2]);
   }
+}
+
+void LJ_FASTCALL recff_cdata_index(jit_State *J, RecordFFData *rd)
+{
+  crec_index(J, rd, 0);
 }
 
 /* Record setting a finalizer. */
@@ -1519,13 +1526,19 @@ static TRef crec_arith_int64(jit_State *J, TRef *sp, CType **s, MMS mm)
   return 0;
 }
 
-static TRef crec_arith_ptr(jit_State *J, TRef *sp, CType **s, MMS mm)
+static TRef crec_arith_ptr(jit_State *J, TRef *sp, CType **s, MMS mm,
+			   int allowprivate)
 {
   CTState *cts = ctype_ctsG(J2G(J));
   CType *ctp = s[0];
   if (!(sp[0] && sp[1])) return 0;
-  if ((lj_ctype_ptrmeta(cts, ctp, mm) || lj_ctype_ptrmeta(cts, s[1], mm)) &&
+  if (!allowprivate &&
+      (lj_ctype_ptrmeta(cts, ctp, mm) || lj_ctype_ptrmeta(cts, s[1], mm)) &&
       !(mm == MM_eq && (tref_isnil(J->base[0]) || tref_isnil(J->base[1]))))
+    return 0;
+  if (!allowprivate && (mm == MM_add || mm == MM_sub) &&
+      (lj_ctype_ptrmeta(cts, ctp, MM_index) ||
+       lj_ctype_ptrmeta(cts, s[1], MM_index)))
     return 0;
   if (ctype_isptr(ctp->info) || ctype_isrefarray(ctp->info)) {
     if ((mm == MM_sub || mm == MM_eq || mm == MM_lt || mm == MM_le) &&
@@ -1621,7 +1634,7 @@ static TRef crec_arith_meta(jit_State *J, TRef *sp, CType **s, CTState *cts,
   return 0;
 }
 
-void LJ_FASTCALL recff_cdata_arith(jit_State *J, RecordFFData *rd)
+static void crec_arith(jit_State *J, RecordFFData *rd, int allowprivate)
 {
   CTState *cts = ctype_cts(J->L);
   MMS mm = (MMS)rd->data;
@@ -1711,9 +1724,12 @@ void LJ_FASTCALL recff_cdata_arith(jit_State *J, RecordFFData *rd)
   }
   {
     TRef tr;
-    if ((mm == MM_len || mm == MM_concat ||
+    if (allowprivate) {
+      if (!(tr = crec_arith_ptr(J, sp, s, mm, 1)))
+	lj_trace_err(J, LJ_TRERR_BADTYPE);
+    } else if ((mm == MM_len || mm == MM_concat ||
 	 (!(tr = crec_arith_int64(J, sp, s, mm)) &&
-	  !(tr = crec_arith_ptr(J, sp, s, mm)))) &&
+	  !(tr = crec_arith_ptr(J, sp, s, mm, 0)))) &&
 	!(tr = crec_arith_meta(J, sp, s, cts, rd)))
       return;
     J->base[0] = tr;
@@ -1727,6 +1743,19 @@ void LJ_FASTCALL recff_cdata_arith(jit_State *J, RecordFFData *rd)
       }
     }
   }
+}
+
+void LJ_FASTCALL recff_cdata_arith(jit_State *J, RecordFFData *rd)
+{
+  crec_arith(J, rd, 0);
+}
+
+void LJ_FASTCALL recff_ffi_ptradd(jit_State *J, RecordFFData *rd)
+{
+  if (!J->base[0] || !J->base[1])
+    lj_trace_err(J, LJ_TRERR_BADTYPE);  /* Interpreter will throw. */
+  rd->data = MM_add;
+  crec_arith(J, rd, 1);
 }
 
 /* -- C library namespace metamethods ------------------------------------- */
@@ -1913,6 +1942,12 @@ void LJ_FASTCALL recff_ffi_istype(jit_State *J, RecordFFData *rd)
 void LJ_FASTCALL recff_ffi_getprivate(jit_State *J, RecordFFData *rd)
 {
   RecordIndex ix;
+  if (tref_iscdata(J->base[0]) &&
+      (tref_isnumber(J->base[1]) || tref_iscdata(J->base[1]))) {
+    rd->data = 0;
+    crec_index(J, rd, 1);  /* Native p[n] on an object handle. */
+    return;
+  }
   if (!tref_iscdata(J->base[0]) || !tref_isstr(J->base[1]))
     lj_trace_err(J, LJ_TRERR_BADTYPE);
   ix.tab = J->base[0];
@@ -1929,6 +1964,12 @@ void LJ_FASTCALL recff_ffi_getprivate(jit_State *J, RecordFFData *rd)
 void LJ_FASTCALL recff_ffi_setprivate(jit_State *J, RecordFFData *rd)
 {
   RecordIndex ix;
+  if (tref_iscdata(J->base[0]) && J->base[2] &&
+      (tref_isnumber(J->base[1]) || tref_iscdata(J->base[1]))) {
+    rd->data = 1;
+    crec_index(J, rd, 1);  /* Native p[n] = v on an object handle. */
+    return;
+  }
   if (!tref_iscdata(J->base[0]) || !tref_isstr(J->base[1]) || !J->base[2])
     lj_trace_err(J, LJ_TRERR_BADTYPE);
   ix.tab = J->base[0];

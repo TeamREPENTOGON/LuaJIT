@@ -155,7 +155,8 @@ collect_attrib:
   } else if (tvisnum(key)) {  /* Numeric key. */
     idx = lj_num2int_type(numV(key), ptrdiff_t);
   integer_key:
-    if (ctype_ispointer(ct->info)) {
+    if (ctype_ispointer(ct->info) &&
+	(allowprivate || !lj_ctype_ptrmeta(cts, ct, MM_index))) {
       CTSize sz = lj_ctype_size(cts, ctype_cid(ct->info));  /* Element size. */
       if (sz == CTSIZE_INVALID)
 	lj_err_caller(cts->L, LJ_ERR_FFI_INVSIZE);

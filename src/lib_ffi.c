@@ -648,6 +648,11 @@ LJLIB_CF(ffi_setprivate)	LJLIB_REC(.)
   return 0;
 }
 
+LJLIB_CF(ffi_ptradd)	LJLIB_REC(.)
+{
+  return lj_carith_ptradd(L);
+}
+
 LJLIB_CF(ffi_sizeof)	LJLIB_REC(ffi_xof FF_ffi_sizeof)
 {
   CTState *cts = ctype_cts(L);

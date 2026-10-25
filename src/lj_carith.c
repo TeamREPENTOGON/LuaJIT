@@ -93,7 +93,8 @@ static int carith_checkarg(lua_State *L, CTState *cts, CDArith *ca)
 }
 
 /* Pointer arithmetic. */
-static int carith_ptr(lua_State *L, CTState *cts, CDArith *ca, MMS mm)
+static int carith_ptr(lua_State *L, CTState *cts, CDArith *ca, MMS mm,
+		      int allowprivate)
 {
   CType *ctp = ca->ct[0];
   uint8_t *pp = ca->p[0];
@@ -102,8 +103,13 @@ static int carith_ptr(lua_State *L, CTState *cts, CDArith *ca, MMS mm)
   CTypeID id;
   GCcdata *cd;
   /* Defer to the pointee's metamethod, except for NULL checks against nil. */
-  if ((lj_ctype_ptrmeta(cts, ctp, mm) || lj_ctype_ptrmeta(cts, ca->ct[1], mm)) &&
+  if (!allowprivate &&
+      (lj_ctype_ptrmeta(cts, ctp, mm) || lj_ctype_ptrmeta(cts, ca->ct[1], mm)) &&
       !(mm == MM_eq && (tvisnil(L->base) || tvisnil(L->base+1))))
+    return 0;
+  if (!allowprivate && (mm == MM_add || mm == MM_sub) &&
+      (lj_ctype_ptrmeta(cts, ctp, MM_index) ||
+       lj_ctype_ptrmeta(cts, ca->ct[1], MM_index)))
     return 0;
   if (ctype_isptr(ctp->info) || ctype_isrefarray(ctp->info)) {
     if ((mm == MM_sub || mm == MM_eq || mm == MM_lt || mm == MM_le) &&
@@ -276,12 +282,32 @@ int lj_carith_op(lua_State *L, MMS mm)
   CTState *cts = ctype_cts(L);
   CDArith ca;
   if (carith_checkarg(L, cts, &ca) && mm != MM_len && mm != MM_concat) {
-    if (carith_int64(L, cts, &ca, mm) || carith_ptr(L, cts, &ca, mm)) {
+    if (carith_int64(L, cts, &ca, mm) || carith_ptr(L, cts, &ca, mm, 0)) {
       copyTV(L, &G(L)->tmptv2, L->top-1);  /* Remember for trace recorder. */
       return 1;
     }
   }
   return lj_carith_meta(L, cts, &ca, mm);
+}
+
+int lj_carith_ptradd(lua_State *L)
+{
+  CTState *cts = ctype_cts(L);
+  CDArith ca;
+  TValue *o = L->base;
+  CType *ct;
+  if (!(o < L->top && tviscdata(o)))
+    lj_err_argt(L, 1, LUA_TCDATA);
+  ct = ctype_raw(cts, cdataV(o)->ctypeid);
+  if (!ctype_isptr(ct->info) || ctype_isref(ct->info))
+    lj_err_argtype(L, 1, "pointer");
+  if (!(o+1 < L->top && (tvisnumber(o+1) || tviscdata(o+1))))
+    lj_err_argt(L, 2, LUA_TNUMBER);
+  if (!carith_checkarg(L, cts, &ca) || !ctype_isnum(ca.ct[1]->info) ||
+      !carith_ptr(L, cts, &ca, MM_add, 1))
+    lj_err_argt(L, 2, LUA_TNUMBER);
+  copyTV(L, &G(L)->tmptv2, L->top-1);
+  return 1;
 }
 
 /* -- 64 bit bit operations helpers --------------------------------------- */
