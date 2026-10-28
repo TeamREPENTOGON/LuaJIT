@@ -1607,7 +1607,7 @@ int lj_record_mm_lookup(jit_State *J, RecordIndex *ix, MMS mm)
       rec_cdata_ctype_guard(J, ix->tab, cd);
       if ((mm == MM_index || mm == MM_newindex) && tref_isstr(ix->key)) {
 	uint8_t *p; CTInfo qual = 0;
-	lj_cdata_index(cts, cd, &ix->keyv, &p, &qual, 1);
+	lj_cdata_index(cts, cd, &ix->keyv, &p, &qual, 0);
 	if (!(qual & 1)) { ix->mt = TREF_NIL; return 0; }
       }
       mo = lj_ctype_meta(cts, cd->ctypeid, mm);

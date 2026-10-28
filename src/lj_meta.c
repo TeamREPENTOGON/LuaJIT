@@ -145,7 +145,7 @@ static int cdata_meta_func(lua_State *L, cTValue *o, cTValue *k, cTValue **pmo,
   CTInfo qual = 0;
   cTValue *mo;
   if (!tvisstr(k)) return 0;
-  lj_cdata_index(cts, cdataV(o), k, &p, &qual, 1);
+  lj_cdata_index(cts, cdataV(o), k, &p, &qual, 0);
   if (!(qual & 1)) return 0;
   mo = lj_ctype_meta(cts, cdataV(o)->ctypeid, mm);
   if (mo && tvisfunc(mo)) { *pmo = mo; return 1; }

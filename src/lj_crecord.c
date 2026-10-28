@@ -933,9 +933,12 @@ again:
       CTSize fofs;
       CType *fct;
       fct = lj_ctype_getfield(cts, ct, name, &fofs);
-      if (fct) {
-	if (ctype_isprivate(fct->info))
+      if (fct && ctype_isprivate(fct->info)) {
+	if (allowprivate)
 	  lj_trace_err(J, LJ_TRERR_NYICONV);
+	fct = NULL;
+      }
+      if (fct) {
 	ofs += (ptrdiff_t)fofs;
 	rtp += (ptrdiff_t)fofs;
 	/* Always specialize to the field name. */

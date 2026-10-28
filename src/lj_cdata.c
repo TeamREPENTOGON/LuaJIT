@@ -183,9 +183,7 @@ collect_attrib:
     if (ctype_isstruct(ct->info)) {
       CTSize ofs;
       CType *fct = lj_ctype_getfieldc(cts, ct, name, &ofs, qual);
-      if (fct) {
-	if (!allowprivate && ctype_isprivate(fct->info))
-	  lj_err_callerv(cts->L, LJ_ERR_FFI_PRIVATE, strdata(name));
+      if (fct && (allowprivate || !ctype_isprivate(fct->info))) {
 	*pp = p + ofs;
 	return fct;
       }
