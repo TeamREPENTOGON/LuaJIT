@@ -1255,8 +1255,9 @@ static void var_remove(LexState *ls, BCReg tolevel)
   }
 }
 
-/* Forward declaration. */
+/* Forward declarations. */
 static void fscope_uvmark(FuncState *fs, BCReg level);
+static void expr_index(FuncState *fs, ExpDesc *t, ExpDesc *e);
 
 /* Lookup variable name. */
 static MSize var_lookup(LexState *ls, ExpDesc *e, GCstr *name)
@@ -1308,6 +1309,17 @@ static MSize var_lookup(LexState *ls, ExpDesc *e, GCstr *name)
       return vidx;
     }
     vidx = v->prev;
+  }
+  if (name != ls->envname) {
+    var_lookup(ls, e, ls->envname);
+    if (e->k != VGLOBAL) {
+      ExpDesc key;
+      expr_toanyreg(ls->fs, e);
+      expr_init(&key, VKSTR, 0);
+      key.u.sval = name;
+      expr_index(ls->fs, e, &key);
+      return vidx;
+    }
   }
   expr_init(e, VGLOBAL, 0);
   e->u.sval = name;
@@ -3161,6 +3173,7 @@ GCproto *lj_parse(LexState *ls)
   ls->level = 0;
   memset(ls->vhash, 0xff, sizeof(ls->vhash));
   fs_init(ls, &fs);
+  ls->envname = lj_parse_keepstr(ls, "_ENV", 4);
   fs.maxline = fs.minline = 0;
   fs.numparams = 0;
   fs.bcbase = NULL;
