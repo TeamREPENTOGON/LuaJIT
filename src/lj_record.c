@@ -18,6 +18,7 @@
 #if LJ_HASFFI
 #include "lj_ctype.h"
 #include "lj_cdata.h"
+#include "lj_carith.h"
 #include "lj_crecord.h"
 #endif
 #include "lj_bc.h"
@@ -144,6 +145,27 @@ static TRef rec_bitop_fromi64(jit_State *J, TRef tr, int64_t v)
   }
   emitir(IRTG(IR_UGT, IRT_U64), biased, lim);
   return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, CTID_INT64), tr);
+}
+
+static int64_t rec_cdata_bit64_i64(jit_State *J, cTValue *tv)
+{
+  CTypeID id = CTID_INT64;
+  if (tvisnum(tv)) return lj_num2i64(numV(tv));
+  return (int64_t)lj_carith_checkbit64(J->L, tv, &id);
+}
+
+static TRef rec_cdata_bitop(jit_State *J, TRef rb, TRef rc,
+			    TValue *rbv, TValue *rcv, IROp op)
+{
+  TRef tr = recff_bit64_bitop(J, rb, rc, rbv, rcv, op);
+  if (tref_type(tr) == IRT_I64) {
+    int64_t b = rec_cdata_bit64_i64(J, rbv);
+    int64_t c = rcv ? rec_cdata_bit64_i64(J, rcv) : 0;
+    lj_needsplit(J);
+    tr = rec_bitop_fromi64(J, tr, op == IR_BNOT ? ~b : op == IR_BAND ? (b & c) :
+				  op == IR_BOR ? (b | c) : (b ^ c));
+  }
+  return tr;
 }
 
 static TRef rec_bitop_shift64(jit_State *J, TRef rb, TRef rc,
@@ -3053,7 +3075,7 @@ void lj_record_ins(jit_State *J)
 	rc = rec_mm_arith(J, &ix, MM_bnot);
 	break;
       }
-      rc = recff_bit64_bitop(J, rc, 0, rcv, NULL, IR_BNOT);
+      rc = rec_cdata_bitop(J, rc, 0, rcv, NULL, IR_BNOT);
       break;
     }
 #endif
@@ -3094,7 +3116,7 @@ void lj_record_ins(jit_State *J)
 	rc = rec_mm_arith(J, &ix, mmm);
 	break;
       }
-      rc = recff_bit64_bitop(J, rb, rc, rbv, rcv, (int)op - (int)BC_BAND + (int)IR_BAND);
+      rc = rec_cdata_bitop(J, rb, rc, rbv, rcv, (IROp)((int)op - (int)BC_BAND + (int)IR_BAND));
       break;
     }
 #endif

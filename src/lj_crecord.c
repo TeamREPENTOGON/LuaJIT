@@ -2183,6 +2183,8 @@ TRef recff_bit64_bitop(jit_State *J, TRef rb, TRef rc,
   tr = crec_bit64_arg(J, ct, rb, rbv);
   tr2 = rcv ? crec_bit64_arg(J, ct, rc, rcv) : 0;
   tr = emitir(IRT(op, id-CTID_INT64+IRT_I64), tr, tr2);
+  if (id == CTID_INT64)
+    return tr;
   return emitir(IRTG(IR_CNEWI, IRT_CDATA), lj_ir_kint(J, id), tr);
 }
 

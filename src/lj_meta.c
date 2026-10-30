@@ -347,7 +347,7 @@ TValue *lj_meta_bitop(lua_State *L, TValue *ra, cTValue *rb, cTValue *rc, BCReg 
       }
       break;
     }
-    if (id) {
+    if (id == CTID_UINT64) {
       GCcdata *cd = lj_cdata_new_(L, id, 8);
       *(uint64_t *)cdataptr(cd) = b;
       setcdataV(L, ra, cd);
